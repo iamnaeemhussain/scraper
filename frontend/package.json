@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "smoke": "node scripts/smoke.mjs",
-    "smoke:ui": "node scripts/interact.mjs"
+    "smoke:ui": "node scripts/interact.mjs",
+    "check:login": "node scripts/login-check.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

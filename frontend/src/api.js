@@ -2,6 +2,46 @@
 // and no API key ever reaches this bundle.
 const BASE = import.meta.env.VITE_API_BASE_URL || "";
 
+/* ------------------------------------------------------------------ session
+ * Primary mechanism: the httpOnly `leadbridge_session` cookie. Nothing in this
+ * file can read it, which is the point.
+ *
+ * Fallback: some hosting contexts refuse to store third-party cookies — embedded
+ * preview panes, iframes on another site, browsers with all cookies blocked. There
+ * the login succeeds but the cookie never comes back, and every request is a 401.
+ * For those contexts the API login response also contains a short-lived bearer
+ * token, which we keep for this tab only (sessionStorage) and send as an
+ * Authorization header. It is a user session token, never an API key.
+ */
+const TOKEN_KEY = "leadbridge.session";
+
+let sessionToken = null;
+
+export function setSessionToken(token) {
+  sessionToken = token || null;
+  try {
+    if (token) window.sessionStorage.setItem(TOKEN_KEY, token);
+    else window.sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* private mode / storage disabled — the in-memory copy still works */
+  }
+}
+
+export function getSessionToken() {
+  if (sessionToken) return sessionToken;
+  try {
+    sessionToken = window.sessionStorage.getItem(TOKEN_KEY) || null;
+  } catch {
+    sessionToken = null;
+  }
+  return sessionToken;
+}
+
+function authHeaders() {
+  const token = getSessionToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export class ApiError extends Error {
   constructor(message, status, detail) {
     super(message);
@@ -42,7 +82,7 @@ async function request(path, { method = "GET", body, formData, headers = {}, sig
   const options = {
     method,
     credentials: "include",
-    headers: { Accept: "application/json", ...headers },
+    headers: { Accept: "application/json", ...authHeaders(), ...headers },
     signal,
   };
   if (formData) {
@@ -54,7 +94,10 @@ async function request(path, { method = "GET", body, formData, headers = {}, sig
 
   const response = await fetch(`${BASE}${path}`, options);
   if (response.status === 204) return null;
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) {
+    if (response.status === 401) setSessionToken(null); // expired or revoked
+    throw await parseError(response);
+  }
   const type = response.headers.get("content-type") || "";
   if (type.includes("application/json")) return response.json();
   return response.text();
@@ -70,13 +113,15 @@ export const api = {
   raw: request,
   buildQuery,
   BASE,
+  setSessionToken,
+  getSessionToken,
 };
 
 export async function downloadFile(path, { body, filename, method = "POST" } = {}) {
   const response = await fetch(`${BASE}${path}`, {
     method,
     credentials: "include",
-    headers: body ? { "Content-Type": "application/json" } : {},
+    headers: { ...authHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!response.ok) throw await parseError(response);

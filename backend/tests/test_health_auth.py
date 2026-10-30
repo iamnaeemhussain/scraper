@@ -88,3 +88,26 @@ def test_api_key_authenticates_without_cookie(client, anon):
 
     assert client.delete(f"/api/settings/api-keys/{created.json()['id']}").status_code == 200
     assert anon.get("/api/jobs", headers=headers).status_code == 401
+
+
+def test_bearer_token_authenticates_like_a_cookie(anon):
+    """The SPA's fallback for browsers that block the session cookie.
+
+    Login returns the same JWT it puts in the cookie; sending it as an
+    Authorization header must work for every user endpoint.
+    """
+    login = anon.post("/api/auth/login", json=ADMIN)
+    assert login.status_code == 200
+    token = login.json()["token"]
+    assert token and token.count(".") == 2
+
+    headers = {"Authorization": f"Bearer {token}"}
+    me = anon.get("/api/auth/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["user"]["email"] == ADMIN["email"]
+    assert anon.get("/api/meta/bootstrap", headers=headers).status_code == 200
+    assert anon.get("/api/leads", headers=headers).status_code == 200
+
+    # a tampered token is refused
+    bad = {"Authorization": f"Bearer {token[:-4]}beef"}
+    assert anon.get("/api/auth/me", headers=bad).status_code == 401

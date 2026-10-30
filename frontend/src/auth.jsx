@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { api } from "./api";
+import { ApiError, api, setSessionToken } from "./api";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [state, setState] = useState({ status: "loading", user: null, bootstrap: null });
+  const [publicInfo, setPublicInfo] = useState(null);
 
   const loadBootstrap = useCallback(async () => {
     try {
@@ -25,16 +26,43 @@ export function AuthProvider({ children }) {
     loadBootstrap();
   }, [loadBootstrap]);
 
+  // Public info (demo flag, environment) so the sign-in screen can explain itself
+  // even before there is a session.
+  useEffect(() => {
+    api.get("/api/health").then(setPublicInfo).catch(() => {});
+  }, []);
+
   const login = useCallback(async (email, password) => {
     const result = await api.post("/api/auth/login", { email, password });
-    await loadBootstrap();
-    return result;
+
+    // Happy path: the httpOnly cookie was stored and bootstrap works.
+    let data = await loadBootstrap();
+    if (data) return result;
+
+    // Fallback for contexts that block the session cookie (embedded previews,
+    // third-party cookie blocking). The API returns a short-lived bearer token
+    // alongside the cookie; use it as an Authorization header for this tab.
+    if (result?.token) {
+      setSessionToken(result.token);
+      data = await loadBootstrap();
+    }
+    if (data) return result;
+
+    setSessionToken(null);
+    setState({ status: "anonymous", user: null, bootstrap: null });
+    throw new ApiError(
+      "Your credentials were accepted, but the browser refused to keep the session " +
+        "(cookies blocked on this preview domain). Open the app in its own browser tab, " +
+        "or allow cookies for this site and try again.",
+      401,
+    );
   }, [loadBootstrap]);
 
   const logout = useCallback(async () => {
     try {
       await api.post("/api/auth/logout");
     } finally {
+      setSessionToken(null);
       setState({ status: "anonymous", user: null, bootstrap: null });
     }
   }, []);
@@ -56,7 +84,8 @@ export function AuthProvider({ children }) {
       engine: state.bootstrap?.engine || {},
       org: state.bootstrap?.app?.org || {},
       environment: state.bootstrap?.app?.environment || "development",
-      demoMode: Boolean(state.bootstrap?.app?.demo_mode),
+      demoMode: Boolean(state.bootstrap?.app?.demo_mode ?? publicInfo?.demo_mode),
+      publicInfo,
       isAuthenticated: state.status === "authenticated",
     };
   }, [state, login, logout, refreshBootstrap]);

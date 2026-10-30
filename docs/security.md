@@ -13,15 +13,26 @@ on the infrastructure side.
   and a number (`password_problems()` in `app/security.py`). Login does not reveal whether the
   e-mail or the password was wrong.
 - **Sessions:** a signed JWT in an **httpOnly, SameSite=Lax cookie** (`leadbridge_session`),
-  `Secure` when `COOKIE_SECURE=true`. The token is never placed in `localStorage`, never returned
-  in a JSON body and never embedded in the SPA bundle.
+  `Secure` when `COOKIE_SECURE=true`. JavaScript cannot read it. The SPA bundle contains no
+  credentials of any kind.
+- **Cookie fallback (by design, narrow):** some contexts refuse to store third-party cookies —
+  embedded preview panes, iframes on another site, browsers with cookies disabled. There the login
+  POST succeeds but the cookie is dropped, and every later request would be a `401`. To keep those
+  environments usable, `POST /api/auth/login` also returns the same short-lived JWT in the JSON
+  body; the SPA **only** uses it after a cookie-based bootstrap failed, keeps it in
+  `sessionStorage` for that tab, sends it as `Authorization: Bearer …`, and clears it on logout,
+  on any `401`, and when a page is closed. In a normal first-party deployment (same-origin Caddy,
+  nginx, Pages+Worker proxy) the cookie works, the fallback is never activated and no token is
+  stored. If you consider `sessionStorage` unacceptable, block the fallback by stripping the
+  `token` field from the login response in your own fork — the cookie path is unaffected.
 - **Lockout:** `LOGIN_MAX_ATTEMPTS` failures (default 5) from one IP lock that IP out for
   `LOGIN_LOCKOUT_MINUTES` (default 15).
 - **Logout** clears the cookie server-side; changing a password does not invalidate other
   sessions — shorten `ACCESS_TOKEN_EXPIRE_MINUTES` if you need that.
 - **API keys** (`lbk_…`) are for machine clients (the extraction worker). Only a SHA-256 hash is
   stored; the plaintext is shown once at creation. Keys carry scopes, can be revoked, and every
-  use updates `last_used_at` and is audited.
+  use updates `last_used_at` and is audited. They are a completely different mechanism from the
+  session token above: an API key never grants access to leads, settings or the UI.
 
 ## Authorisation (RBAC)
 
@@ -109,6 +120,9 @@ drawer → timeline, CSV via Reports) and both respect retention windows.
   the variable (`credential_env`), never the value.
 - The SPA receives permissions, status vocabularies and adapter metadata — nothing else. An
   automated test asserts the bootstrap payload contains no `secret`/`password` strings.
+- The only credential-shaped value the browser can ever hold is the short-lived session token
+  described above (httpOnly cookie first; `sessionStorage` only when cookies are blocked). Adapter
+  credentials, `SECRET_KEY` and API keys never reach the client.
 - `.env`, `*.db`, `backups/` and `node_modules/` are git-ignored. Never commit a real `.env`.
 - Rotating `SECRET_KEY` invalidates all sessions (users must sign in again). Rotate after any
   suspected leak, and rotate API keys from Settings → API keys.
@@ -145,7 +159,9 @@ drawer → timeline, CSV via Reports) and both respect retention windows.
 - [ ] Logs shipped off-box and retained long enough to investigate an incident.
 - [ ] Dependency updates applied (`pip install -U -r backend/requirements.txt`, `npm audit`).
 - [ ] Separate accounts for each person, agents disabled when they leave.
-- [ ] `grep -r "lbk_" frontend/dist` returns nothing (no keys in the bundle).
+- [ ] `grep -r "lbk_" frontend/dist` returns nothing (no keys in the bundle) — CI enforces this.
+- [ ] If your users are always on a first-party domain, consider removing the login response
+      `token` field (see *Cookie fallback* above) to keep sessions cookie-only.
 - [ ] A restore from backup has been *tested*, not just scheduled.
 
 ## Reporting a problem

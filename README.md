@@ -331,6 +331,9 @@ cd backend && ../.venv/bin/python -m pytest -q
 # frontend — production build plus a headless render of every route
 cd frontend && npm run build && npm run smoke
 
+# sign-in works with cookies and with cookies blocked (bearer fallback)
+cd frontend && npm run check:login
+
 # interactive checks (modals, drawers, tabs) against a running dev server
 cd frontend && npm run smoke:ui
 ```
@@ -391,6 +394,8 @@ tool, not legal advice.
 | --- | --- |
 | `Address already in use` | Port 8000 or 5173 busy — stop the other process or pass `--port 8010` / `strictPort: false` |
 | Frontend shows *You do not have access* | Your role lacks the permission — sign in as admin (`admin@leadbridge.demo`) |
+| Signed in, but bounced back to the login page | The browser refused the session cookie (embedded preview / cookies blocked). The app falls back to a session token; if it still fails, open the app in its own tab and allow cookies. Verify with `npm run check:login` |
+| Preview pane shows an old build | The API serves `frontend/dist`: rebuild (`npm run build`) after frontend changes, or use the Vite dev server on port 5173 |
 | `401 Not authenticated` on every call | Cookies blocked or `COOKIE_SECURE=true` on plain HTTP. Set `COOKIE_SECURE=false` locally |
 | Live run fails with *domain not on allowlist* | Add the host to `ALLOWED_LIVE_DOMAINS` **and** the source's allowed domains |
 | Live run fails with *robots.txt disallows* | The site forbids automated collection at that path — pick another permitted source |

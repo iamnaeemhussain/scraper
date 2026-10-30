@@ -1,0 +1,36 @@
+# ---------------------------------------------------------------- Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# ---------------------------------------------------------------- Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# ---------------------------------------------------------------- Data & secrets
+# The SQLite database, backups, imports and exports never belong in git.
+backend/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+backups/
+.env
+.env.*
+!.env.example
+
+# ---------------------------------------------------------------- OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

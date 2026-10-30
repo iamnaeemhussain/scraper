@@ -1,0 +1,55 @@
+# systemd unit for LeadBridge (single-server deployment).
+#
+#   sudo cp deploy/leadbridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now leadbridge
+#   journalctl -u leadbridge -f
+#
+# Adjust User/WorkingDirectory if you installed somewhere other than /opt/leadbridge/app.
+
+[Unit]
+Description=LeadBridge API and web app
+Documentation=https://github.com/your-org/scraper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=leadbridge
+Group=leadbridge
+WorkingDirectory=/opt/leadbridge/app/backend
+EnvironmentFile=/opt/leadbridge/app/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# One worker: collection jobs run inside the process (SQLite is single-writer).
+# For PostgreSQL and more traffic use e.g. --workers 2.
+ExecStart=/opt/leadbridge/app/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 \
+    --proxy-headers --forwarded-allow-ips="127.0.0.1" \
+    --timeout-keep-alive 30
+
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+# Hardening: the app only needs its own directory and the data/backup paths.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/leadbridge/app/backend/data /var/backups/leadbridge
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=leadbridge
+
+[Install]
+WantedBy=multi-user.target

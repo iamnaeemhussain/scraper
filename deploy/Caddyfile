@@ -1,0 +1,41 @@
+# Caddy reverse proxy for LeadBridge.
+# Install: copy to /etc/caddy/Caddyfile, replace the domain, then `sudo systemctl reload caddy`.
+# Caddy obtains and renews the TLS certificate automatically.
+
+leads.example.com {
+	encode zstd gzip
+
+	# Security headers the app does not set itself (the API sets the rest).
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# Real client IP for rate limiting and audit logs.
+	reverse_proxy 127.0.0.1:8000 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+
+		# Exports can be large; do not buffer them in the proxy.
+		flush_interval -1
+	}
+
+	# Long-lived static assets from the built SPA.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	log {
+		output file /var/log/caddy/leadbridge.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+	}
+}
+
+# Optional: run without TLS for a quick internal test (never expose this publicly).
+# :8080 {
+# 	reverse_proxy 127.0.0.1:8000
+# }

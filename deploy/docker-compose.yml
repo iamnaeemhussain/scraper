@@ -1,0 +1,59 @@
+# LeadBridge — single-container deployment (SQLite on a named volume).
+#
+#   cp .env.example .env      # apply the production checklist first
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+# Put Caddy, nginx or Cloudflare in front for TLS. The app listens on 8000.
+#
+# Switching to PostgreSQL? Uncomment the `db` service, set DATABASE_URL and
+# remove the leadbridge-data volume from `app`.
+
+name: leadbridge
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: leadbridge:latest
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: sqlite:////data/leadbridge.db
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+    ports:
+      - "8000:8000"
+    volumes:
+      - leadbridge-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # db:
+  #   image: postgres:16-alpine
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: leadbridge
+  #     POSTGRES_USER: leadbridge
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+  #   volumes:
+  #     - leadbridge-pg:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U leadbridge -d leadbridge"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+volumes:
+  leadbridge-data:
+  # leadbridge-pg:

@@ -1,93 +1,93 @@
-import '@testing-library/jest-dom';
-import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { formatMbToReadable, formatPkr } from './lib/api';
-import { AuthProvider } from './lib/auth';
-import { StorefrontPage } from './pages/StorefrontPage';
+import React from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { App } from './App';
 
-describe('Pak-Tel Web Storefront & Formatting', () => {
+describe('Pak-Tel Storefront & Secret Admin Gate', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    localStorage.clear();
-  });
+    window.history.pushState({}, '', '/');
 
-  it('formats PKR whole rupees and MB/GB usage cleanly', () => {
-    expect(formatPkr(2499)).toBe('Rs. 2,499');
-    expect(formatPkr(7099)).toBe('Rs. 7,099');
-    expect(formatMbToReadable(512)).toBe('512 MB');
-    expect(formatMbToReadable(15360)).toBe('15.00 GB');
-  });
-
-  it('renders Storefront bundles, strikethrough discount badges, and device checker', async () => {
-    const mockBundles = [
-      {
-        id: 'b-15gb',
-        name: '15 GB 30 Days',
-        slug: '15-gb-30-days',
-        pricePkr: 2499,
-        actualPricePkr: 4999,
-        discountPct: 50,
-        priceDifferencePkr: 2500,
-        currency: 'PKR',
-        dataLabel: '15 GB',
-        dataGb: 15,
-        isUnlimited: false,
-        validityDays: 30,
-        isReloadable: true,
-        isMostPopular: true,
-        countryCode: 'PK',
-        countryName: 'Pakistan',
-        coverageType: '5G/4G/LTE',
-        planType: 'Data only',
-        hotspotAllowed: true,
-        activationType: 'Instant',
-        operators: 'Jazz (Mobilink) Pakistan',
-        yesimPlanId: 'e299479f253a1a82968fd070df904313',
-        contact: '3259717066',
-        message: null,
-        sortOrder: 1,
-      },
-    ];
-
-    const mockDevices = [
-      {
-        type: 'PHONE',
-        brands: [
-          {
-            brand: 'Apple',
-            models: [{ model: 'iPhone 16 Pro Max' }],
-          },
-        ],
-      },
-    ];
-
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes('/api/bundles')) {
-        return new Response(JSON.stringify(mockBundles), { status: 200 });
+      if (url.startsWith('/api/store-config')) {
+        return new Response(
+          JSON.stringify({
+            storeName: 'Pak-Tel eSIM',
+            currency: 'PKR',
+            paymentProvider: 'DPAY',
+            supportWhatsapp: '923259717066',
+            storeNotice: 'Pak-Tel updates ticker',
+            compatibilityBrands: 10,
+          }),
+          { status: 200 },
+        );
       }
-      if (url.includes('/api/compatibility/devices')) {
-        return new Response(JSON.stringify(mockDevices), { status: 200 });
+      if (url.startsWith('/api/bundles')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'b1',
+              yesimPackageCode: 'PK_15GB_30D',
+              name: '15 GB 30 Days',
+              countryCode: 'PK',
+              countryName: 'Pakistan',
+              region: 'South Asia',
+              dataMb: 15360,
+              dataDisplay: '15 GB',
+              validityDays: 30,
+              coverage: '5G/4G/LTE',
+              planType: 'Data only',
+              hotspotSupported: true,
+              activationType: 'Instant',
+              reloadable: true,
+              unlimited: false,
+              pricePkr: 2499,
+              originalPricePkr: 4999,
+              costUsdCents: 690,
+              badge: 'Most popular',
+              sortOrder: 1,
+              enabled: true,
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (url.startsWith('/api/admin/gate')) {
+        const hdr = (init?.headers as Record<string, string> | undefined)?.['X-Admin-Secret-Path'];
+        if (hdr === 'private-ops-test') {
+          return new Response(
+            JSON.stringify({ authorizedRoute: true, credentialsConfigured: true }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
       }
       return new Response(JSON.stringify({}), { status: 200 });
-    });
+    }) as any;
+  });
 
-    render(
-      <MemoryRouter>
-        <AuthProvider>
-          <StorefrontPage config={null} />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+  it('renders Pak-Tel hero, logo, PKR plans, and zero user account signup links', async () => {
+    render(<App />);
+    expect(await screen.findByText(/Your data\./i)).toBeDefined();
+    expect(await screen.findByText(/PKR 2,499/i)).toBeDefined();
+    expect(screen.queryByText(/Register/i)).toBeNull();
+    expect(screen.queryByText(/Create account/i)).toBeNull();
+  });
 
+  it('returns 404 on /admin when secret path does not match runtime secret', async () => {
+    window.history.pushState({}, '', '/admin');
+    render(<App />);
     await waitFor(() => {
-      expect(screen.getByText('15 GB 30 Days')).toBeInTheDocument();
+      expect(screen.getByText(/Page not found/i)).toBeDefined();
     });
+  });
 
-    expect(screen.getByText('50% OFF')).toBeInTheDocument();
-    expect(screen.getByText('Most Popular')).toBeInTheDocument();
-    expect(screen.getByText('iPhone 16 Pro Max')).toBeInTheDocument();
+  it('unlocks Admin Login only on verified runtime secret route', async () => {
+    window.history.pushState({}, '', '/private-ops-test');
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText(/Pak-Tel Operations/i)).toBeDefined();
+    });
   });
 });

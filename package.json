@@ -1,0 +1,20 @@
+{
+  "name": "scraper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pak-Tel Digital Data eSIM Store & Self-Service ICCID Top-Up Platform on Cloudflare Workers",
+  "scripts": {
+    "build": "npm --prefix web install --no-audit --no-fund && npm --prefix web run build",
+    "build:local": "npm run build && mkdir -p .data && ./web/node_modules/.bin/esbuild worker/src/local-server.ts --bundle --platform=node --format=esm --external:node:sqlite --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=.data/local-server.mjs",
+    "preview:local": "npm run build:local && node .data/local-server.mjs",
+    "deploy": "npx wrangler deploy",
+    "test:worker": "mkdir -p .data && ./web/node_modules/.bin/esbuild worker/src/router.test.ts --bundle --platform=node --format=esm --external:node:sqlite --external:node:test --external:node:assert/strict --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=.data/router.test.mjs && node --test .data/router.test.mjs",
+    "test": "npm --prefix web test -- --run && npm run test:worker"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5"
+  }
+}

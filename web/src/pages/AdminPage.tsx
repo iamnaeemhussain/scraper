@@ -1,794 +1,755 @@
 import React, { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
-import {
-  Activity,
-  CheckCircle2,
-  Edit3,
-  Layers,
-  Loader2,
-  PackagePlus,
-  Plus,
-  QrCode,
-  RefreshCw,
-  Search,
-  Settings,
-  ShoppingBag,
-  Sparkles,
-  Trash2,
-  X,
-} from 'lucide-react';
-import {
-  AdminBundle,
-  apiFetch,
-  EsimRecord,
-  formatMbToReadable,
-  formatPkr,
-} from '../lib/api';
-import { useAuth } from '../lib/auth';
+import { Link, useLocation } from 'react-router-dom';
+import { api, Bundle, formatBytes, formatPkr } from '../lib/api';
 
-interface YesimPlanOption {
-  id: string;
-  name: string;
-  days: string;
-  data: string;
-  countries_included: string;
-  countryIso2: string;
-  operators: string;
-  price: string;
-  currency: string;
-}
-
-interface DashboardData {
-  metrics: {
-    totalRevenuePkr: number;
-    estimatedCommissionPkr: number;
-    totalBundles: number;
-    activeBundles: number;
-    totalOrders: number;
-    provisionedOrders: number;
-    pendingOrders: number;
-    failedOrders: number;
-    totalEsims: number;
-    activeEsims: number;
-    completedTopUps: number;
-  };
-  yesim: { balance: number; currency: string; mock?: boolean };
-  dpay: { healthy: boolean; mockMode: boolean };
-}
-
-interface AdminOrder {
-  id: string;
-  orderNumber: string;
-  customerEmail: string;
-  customerPhone: string | null;
-  amountPkr: number;
-  status: string;
-  dpaySessionId: string | null;
-  lastError: string | null;
-  createdAt: string;
-  items: { bundleName: string; quantity: number }[];
-}
-
-interface BundleFormState {
-  id?: string;
-  name: string;
-  pricePkr: number;
-  actualPricePkr: string;
-  discountPct: string;
-  priceDifferencePkr: string;
-  dataLabel: string;
-  dataGb: string;
-  isUnlimited: boolean;
-  validityDays: number;
-  isReloadable: boolean;
-  isMostPopular: boolean;
-  costEur: string;
-  costPkr: string;
-  commissionPkr: string;
-  eurToPkr: number;
-  yesimPlanId: string;
-  contact: string;
-  message: string;
-  countryCode: string;
-  countryName: string;
-  coverageType: string;
-  planType: string;
-  hotspotAllowed: boolean;
-  activationType: string;
-  operators: string;
-  sortOrder: number;
-  isActive: boolean;
-}
-
-const emptyBundleForm = (fx = 303.8602): BundleFormState => ({
-  name: '',
-  pricePkr: 1999,
-  actualPricePkr: '3499',
-  discountPct: '',
-  priceDifferencePkr: '',
-  dataLabel: '10 GB',
-  dataGb: '10',
-  isUnlimited: false,
-  validityDays: 30,
-  isReloadable: true,
-  isMostPopular: false,
-  costEur: '',
-  costPkr: '',
-  commissionPkr: '',
-  eurToPkr: fx,
-  yesimPlanId: '',
-  contact: '3259717066',
-  message: '',
-  countryCode: 'PK',
-  countryName: 'Pakistan',
-  coverageType: '5G/4G/LTE',
-  planType: 'Data only',
-  hotspotAllowed: true,
-  activationType: 'Instant',
-  operators: 'Jazz (Mobilink) Pakistan',
-  sortOrder: 10,
-  isActive: true,
-});
-
-export function AdminPage({ onSettingsChanged }: { onSettingsChanged: () => void }) {
-  const { user, loading: authLoading } = useAuth();
-  const [tab, setTab] = useState<'overview' | 'bundles' | 'orders' | 'esims' | 'settings'>(
-    'bundles',
-  );
-  const [toast, setToast] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // State
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
-  const [bundles, setBundles] = useState<AdminBundle[]>([]);
-  const [orders, setOrders] = useState<AdminOrder[]>([]);
-  const [esims, setEsims] = useState<EsimRecord[]>([]);
-  const [esimSearch, setEsimSearch] = useState('');
-  const [webhooks, setWebhooks] = useState<
-    { id: string; source: string; eventType: string; receivedAt: string; error: string | null }[]
-  >([]);
-
-  // Bundle modal & Yesim plan browser
-  const [editingBundle, setEditingBundle] = useState<BundleFormState | null>(null);
-  const [yesimPlans, setYesimPlans] = useState<YesimPlanOption[]>([]);
-  const [showYesimPicker, setShowYesimPicker] = useState(false);
-  const [yesimFilterText, setYesimFilterText] = useState('Pakistan');
-  const [fxInput, setFxInput] = useState('303.8602');
-  const [busy, setBusy] = useState(false);
-
-  // Bulk voucher modal
-  const [bulkPlanId, setBulkPlanId] = useState('');
-  const [bulkCount, setBulkCount] = useState(2);
-  const [bulkVoucher, setBulkVoucher] = useState(true);
-
-  // Settings form
-  const [settingsForm, setSettingsForm] = useState<{
-    storeName: string;
-    tagline: string;
-    announcementTicker: string;
-    whatsappNumber: string;
-    supportEmail: string;
-    defaultEurToPkr: number;
-    yesimBaseUrl: string;
-    yesimApiToken: string;
-    yesimMockMode: boolean;
-    dpayBaseUrl: string;
-    dpayApiKey: string;
-    dpayWebhookSecret: string;
-    dpayMockMode: boolean;
-  } | null>(null);
-
-  const notify = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3500);
-  };
-
-  const loadAll = async () => {
-    try {
-      const [dash, bList, oList, eList, sData, wList] = await Promise.all([
-        apiFetch<DashboardData>('/api/admin/dashboard'),
-        apiFetch<AdminBundle[]>('/api/admin/bundles'),
-        apiFetch<AdminOrder[]>('/api/admin/orders'),
-        apiFetch<EsimRecord[]>('/api/admin/esims'),
-        apiFetch<NonNullable<typeof settingsForm>>('/api/admin/settings'),
-        apiFetch<typeof webhooks>('/api/admin/webhooks'),
-      ]);
-      setDashboard(dash);
-      setBundles(bList);
-      setOrders(oList);
-      setEsims(eList);
-      if (sData) {
-        setSettingsForm({
-          storeName: sData.storeName || 'Pak-Tel',
-          tagline: sData.tagline || '',
-          announcementTicker: sData.announcementTicker || '',
-          whatsappNumber: sData.whatsappNumber || '923259717066',
-          supportEmail: sData.supportEmail || 'support@pak-tel.com',
-          defaultEurToPkr: sData.defaultEurToPkr || 303.8602,
-          yesimBaseUrl: sData.yesimBaseUrl || 'https://partners-api.yesim.biz',
-          yesimApiToken: sData.yesimApiToken || '',
-          yesimMockMode: Boolean(sData.yesimMockMode),
-          dpayBaseUrl: sData.dpayBaseUrl || 'https://api.dpay.com.pk/v1',
-          dpayApiKey: sData.dpayApiKey || '',
-          dpayWebhookSecret: sData.dpayWebhookSecret || '',
-          dpayMockMode: Boolean(sData.dpayMockMode),
-        });
-        setFxInput(String(sData.defaultEurToPkr || 303.8602));
-      }
-      setWebhooks(wList);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-
-  useEffect(() => {
-    if (user?.role === 'ADMIN') {
-      loadAll();
-    }
-  }, [user]);
-
-  if (authLoading) return null;
-  if (!user) return <Navigate to="/login" replace />;
-  if (user.role !== 'ADMIN') return <Navigate to="/account" replace />;
-
-  const openYesimBrowser = async () => {
-    setShowYesimPicker(true);
-    if (yesimPlans.length === 0) {
-      try {
-        const plans = await apiFetch<YesimPlanOption[]>('/api/admin/yesim/plans');
-        setYesimPlans(plans);
-      } catch (err) {
-        setError((err as Error).message);
-      }
-    }
-  };
-
-  const applyYesimPlanToForm = (p: YesimPlanOption) => {
-    if (!editingBundle) return;
-    const isUnlim = /unlim/i.test(p.data);
-    const dataLabel = isUnlim ? 'Unlimited Data' : `${p.data} GB`;
-    const costEurNum = Number(p.price) || 0;
-    const fx = editingBundle.eurToPkr || Number(fxInput) || 303.8602;
-    const computedCostPkr = Math.round(costEurNum * fx * 10) / 10;
-
-    setEditingBundle({
-      ...editingBundle,
-      yesimPlanId: p.id,
-      name:
-        editingBundle.name ||
-        (isUnlim
-          ? `Unlimited Data for ${p.days} Days`
-          : `${p.data} GB ${p.days} Days`),
-      dataLabel,
-      dataGb: isUnlim ? '' : p.data,
-      isUnlimited: isUnlim,
-      validityDays: Number(p.days) || 30,
-      costEur: p.price,
-      costPkr: String(computedCostPkr),
-      commissionPkr: String(Math.round(editingBundle.pricePkr - computedCostPkr)),
-      countryCode: p.countryIso2 || 'PK',
-      countryName: p.countries_included.split(',')[0] || 'Pakistan',
-      operators: p.operators || 'Jazz (Mobilink) Pakistan',
-    });
-    setShowYesimPicker(false);
-  };
-
-  const openEditModal = (b: AdminBundle) => {
-    setEditingBundle({
-      id: b.id,
-      name: b.name,
-      pricePkr: b.pricePkr,
-      actualPricePkr: b.actualPricePkr != null ? String(b.actualPricePkr) : '',
-      discountPct: b.discountPct != null ? String(b.discountPct) : '',
-      priceDifferencePkr:
-        b.priceDifferencePkr != null ? String(b.priceDifferencePkr) : '',
-      dataLabel: b.dataLabel,
-      dataGb: b.dataGb != null ? String(b.dataGb) : '',
-      isUnlimited: b.isUnlimited,
-      validityDays: b.validityDays,
-      isReloadable: b.isReloadable,
-      isMostPopular: b.isMostPopular,
-      costEur: b.costEur != null ? String(b.costEur) : '',
-      costPkr: b.costPkr != null ? String(b.costPkr) : '',
-      commissionPkr: b.commissionPkr != null ? String(b.commissionPkr) : '',
-      eurToPkr: b.eurToPkr || Number(fxInput) || 303.8602,
-      yesimPlanId: b.yesimPlanId,
-      contact: b.contact || '3259717066',
-      message: b.message || '',
-      countryCode: b.countryCode || 'PK',
-      countryName: b.countryName || 'Pakistan',
-      coverageType: b.coverageType || '5G/4G/LTE',
-      planType: b.planType || 'Data only',
-      hotspotAllowed: b.hotspotAllowed,
-      activationType: b.activationType || 'Instant',
-      operators: b.operators || '',
-      sortOrder: b.sortOrder,
-      isActive: b.isActive,
-    });
-  };
-
-  const handleSaveBundle = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingBundle) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const payload = {
-        name: editingBundle.name,
-        pricePkr: Number(editingBundle.pricePkr),
-        actualPricePkr: editingBundle.actualPricePkr
-          ? Number(editingBundle.actualPricePkr)
-          : null,
-        discountPct: editingBundle.discountPct
-          ? Number(editingBundle.discountPct)
-          : undefined,
-        priceDifferencePkr: editingBundle.priceDifferencePkr
-          ? Number(editingBundle.priceDifferencePkr)
-          : undefined,
-        dataLabel: editingBundle.dataLabel,
-        dataGb:
-          editingBundle.isUnlimited || !editingBundle.dataGb
-            ? null
-            : Number(editingBundle.dataGb),
-        isUnlimited: editingBundle.isUnlimited,
-        validityDays: Number(editingBundle.validityDays),
-        isReloadable: editingBundle.isReloadable,
-        isMostPopular: editingBundle.isMostPopular,
-        costEur: editingBundle.costEur ? Number(editingBundle.costEur) : null,
-        costPkr: editingBundle.costPkr ? Number(editingBundle.costPkr) : undefined,
-        commissionPkr: editingBundle.commissionPkr
-          ? Number(editingBundle.commissionPkr)
-          : undefined,
-        eurToPkr: Number(editingBundle.eurToPkr),
-        yesimPlanId: editingBundle.yesimPlanId,
-        contact: editingBundle.contact || null,
-        message: editingBundle.message || null,
-        countryCode: editingBundle.countryCode,
-        countryName: editingBundle.countryName,
-        coverageType: editingBundle.coverageType,
-        planType: editingBundle.planType,
-        hotspotAllowed: editingBundle.hotspotAllowed,
-        activationType: editingBundle.activationType,
-        operators: editingBundle.operators || null,
-        sortOrder: Number(editingBundle.sortOrder),
-        isActive: editingBundle.isActive,
-      };
-
-      if (editingBundle.id) {
-        await apiFetch(`/api/admin/bundles/${editingBundle.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify(payload),
-        });
-        notify('Bundle updated!');
-      } else {
-        await apiFetch('/api/admin/bundles', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-        notify('New bundle created!');
-      }
-
-      setEditingBundle(null);
-      await loadAll();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleToggleBundle = async (b: AdminBundle) => {
-    await apiFetch(`/api/admin/bundles/${b.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ isActive: !b.isActive }),
-    });
-    await loadAll();
-  };
-
-  const handleDeleteBundle = async (b: AdminBundle) => {
-    if (!window.confirm(`Delete bundle "${b.name}"?`)) return;
-    await apiFetch(`/api/admin/bundles/${b.id}`, { method: 'DELETE' });
-    notify(`Deleted "${b.name}"`);
-    await loadAll();
-  };
-
-  const handleImportSheet = async () => {
-    setBusy(true);
-    try {
-      const res = await apiFetch<{ created: number; skipped: number }>(
-        '/api/admin/bundles/import-reference-sheet',
-        { method: 'POST' },
-      );
-      notify(`Loaded ${res.created} Pak-Tel reference plans (${res.skipped} already present)`);
-      await loadAll();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleRecalculateFx = async () => {
-    setBusy(true);
-    try {
-      const res = await apiFetch<{ updatedBundles: number }>(
-        '/api/admin/bundles/recalculate-fx',
-        {
-          method: 'POST',
-          body: JSON.stringify({ eurToPkr: Number(fxInput) }),
-        },
-      );
-      notify(`Recalculated PKR cost & commission across ${res.updatedBundles} bundles!`);
-      await loadAll();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleSaveSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!settingsForm) return;
-    setBusy(true);
-    try {
-      await apiFetch('/api/admin/settings', {
-        method: 'PATCH',
-        body: JSON.stringify(settingsForm),
-      });
-      notify('Store & integration settings saved!');
-      onSettingsChanged();
-      await loadAll();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleIssueBulk = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!bulkPlanId.trim()) return;
-    setBusy(true);
-    try {
-      const res = await apiFetch<{ issuedCount: number }>('/api/admin/yesim/issue-bulk', {
-        method: 'POST',
-        body: JSON.stringify({
-          planId: bulkPlanId.trim(),
-          count: Number(bulkCount),
-          voucher: bulkVoucher,
-        }),
-      });
-      notify(`Issued ${res.issuedCount} Yesim eSIMs!`);
-      await loadAll();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
+function NotFoundView() {
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Top Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-white">
-            Pak-Tel Admin Console
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
-            Manual Bundle Management • Yesim Partner Provisioning • DPay PKR Gateway
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {[
-            { id: 'bundles', label: 'Bundles Catalog', icon: Layers },
-            { id: 'overview', label: 'Overview', icon: Activity },
-            { id: 'orders', label: 'Orders & DPay', icon: ShoppingBag },
-            { id: 'esims', label: 'eSIMs & Vouchers', icon: QrCode },
-            { id: 'settings', label: 'Settings & Webhooks', icon: Settings },
-          ].map((t) => {
-            const Icon = t.icon;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id as typeof tab)}
-                className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 border transition ${
-                  tab === t.id
-                    ? 'bg-emerald-500 text-slate-950 border-emerald-400'
-                    : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {t.label}
-              </button>
-            );
-          })}
+    <div className="pt-[120px] pb-24 bg-[#f5f6f1] min-h-[75vh] flex items-center">
+      <div className="pt-container max-w-lg text-center">
+        <span className="font-mono-pt text-xs uppercase tracking-widest text-[#071322]/50">
+          404 • Not Found
+        </span>
+        <h1 className="font-display text-5xl font-semibold tracking-tight mt-2 text-[#071322]">
+          Page not found.
+        </h1>
+        <p className="mt-3 text-sm text-[#071322]/65">
+          The page you requested does not exist. Explore Pak-Tel data plans or check your eSIM
+          balance below.
+        </p>
+        <div className="mt-7 flex justify-center gap-3">
+          <Link to="/" className="pt-btn pt-btn--lime">
+            Browse Plans ↗
+          </Link>
+          <Link to="/my-esim" className="pt-btn pt-btn--dark">
+            Check ICCID ↗
+          </Link>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {toast && (
-        <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 text-sm font-semibold flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          {toast}
-        </div>
-      )}
+const EMPTY_FORM = {
+  yesimPackageCode: '',
+  name: '',
+  countryCode: 'PK',
+  countryName: 'Pakistan',
+  region: 'South Asia',
+  dataMb: 5120,
+  dataDisplay: '5 GB',
+  validityDays: 15,
+  coverage: '5G/4G/LTE',
+  planType: 'Data only',
+  hotspotSupported: true,
+  activationType: 'Instant',
+  reloadable: true,
+  unlimited: false,
+  pricePkr: 1499,
+  originalPricePkr: 2099,
+  costUsdCents: 410,
+  badge: 'Flexible data',
+  sortOrder: 12,
+  enabled: true,
+};
 
-      {error && (
-        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-xs underline">
-            Dismiss
-          </button>
-        </div>
-      )}
+export function AdminPage() {
+  const location = useLocation();
+  const secretSlug = location.pathname.replace(/^\/+|\/+$/g, '');
 
-      {/* TAB 1: MANUAL BUNDLES MANAGER */}
-      {tab === 'bundles' && (
-        <div className="space-y-6">
-          <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="flex flex-wrap items-center gap-3">
+  const [gateState, setGateState] = useState<'checking' | 'denied' | 'allowed'>('checking');
+  const [credentialsConfigured, setCredentialsConfigured] = useState(true);
+  const [adminToken, setAdminToken] = useState<string>(
+    () => sessionStorage.getItem('paktel_admin_jwt') || '',
+  );
+
+  // Login form
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+
+  // Console state
+  const [tab, setTab] = useState<'overview' | 'bundles' | 'orders' | 'esims' | 'settings'>(
+    'overview',
+  );
+  const [dashboard, setDashboard] = useState<any>(null);
+  const [bundles, setBundles] = useState<Bundle[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [esims, setEsims] = useState<any[]>([]);
+  const [webhooks, setWebhooks] = useState<any[]>([]);
+  const [settings, setSettings] = useState<{
+    fxRateUsdToPkr: number;
+    defaultMarginPercent: number;
+    storeNotice: string;
+  }>({ fxRateUsdToPkr: 278.5, defaultMarginPercent: 30, storeNotice: '' });
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<any>(EMPTY_FORM);
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (!secretSlug) {
+      setGateState('denied');
+      return;
+    }
+    setGateState('checking');
+    api
+      .verifyAdminGate(secretSlug)
+      .then((res) => {
+        if (!active) return;
+        if (res?.authorizedRoute) {
+          setCredentialsConfigured(res.credentialsConfigured);
+          setGateState('allowed');
+        } else {
+          setGateState('denied');
+        }
+      })
+      .catch(() => {
+        if (active) setGateState('denied');
+      });
+    return () => {
+      active = false;
+    };
+  }, [secretSlug]);
+
+  useEffect(() => {
+    if (gateState === 'allowed' && adminToken) {
+      refreshAll();
+    }
+  }, [gateState, adminToken]);
+
+  function notify(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3500);
+  }
+
+  async function refreshAll() {
+    try {
+      const [d, b, o, e, s, w] = await Promise.all([
+        api.adminFetch(secretSlug, adminToken, '/dashboard'),
+        api.adminFetch<Bundle[]>(secretSlug, adminToken, '/bundles'),
+        api.adminFetch<any[]>(secretSlug, adminToken, '/orders'),
+        api.adminFetch<any[]>(secretSlug, adminToken, '/esims'),
+        api.adminFetch<any>(secretSlug, adminToken, '/settings'),
+        api.adminFetch<any[]>(secretSlug, adminToken, '/webhooks'),
+      ]);
+      setDashboard(d);
+      setBundles(b);
+      setOrders(o);
+      setEsims(e);
+      setSettings(s);
+      setWebhooks(w);
+    } catch (err: any) {
+      if (String(err?.message || '').toLowerCase().includes('unauthorized')) {
+        sessionStorage.removeItem('paktel_admin_jwt');
+        setAdminToken('');
+      }
+    }
+  }
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setLoginError(null);
+    setLoggingIn(true);
+    try {
+      const res = await api.adminLogin(secretSlug, email.trim(), password);
+      sessionStorage.setItem('paktel_admin_jwt', res.accessToken);
+      setAdminToken(res.accessToken);
+      setPassword('');
+    } catch (err: any) {
+      setLoginError(err?.message || 'Admin login failed');
+    } finally {
+      setLoggingIn(false);
+    }
+  }
+
+  async function saveBundle(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      if (editingId) {
+        await api.adminFetch(secretSlug, adminToken, `/bundles/${editingId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(form),
+        });
+        notify('Plan updated.');
+      } else {
+        await api.adminFetch(secretSlug, adminToken, '/bundles', {
+          method: 'POST',
+          body: JSON.stringify(form),
+        });
+        notify('New plan created.');
+      }
+      setEditingId(null);
+      setForm(EMPTY_FORM);
+      await refreshAll();
+    } catch (err: any) {
+      notify(err?.message || 'Failed to save plan');
+    }
+  }
+
+  async function toggleBundle(b: Bundle) {
+    await api.adminFetch(secretSlug, adminToken, `/bundles/${b.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled: !b.enabled }),
+    });
+    await refreshAll();
+  }
+
+  async function deleteBundle(id: string) {
+    if (!window.confirm('Delete this plan permanently?')) return;
+    await api.adminFetch(secretSlug, adminToken, `/bundles/${id}`, { method: 'DELETE' });
+    notify('Plan deleted.');
+    await refreshAll();
+  }
+
+  async function resendMailjetEmail(orderId: string) {
+    try {
+      const res = await api.adminFetch(
+        secretSlug,
+        adminToken,
+        `/orders/${orderId}/resend-email`,
+        { method: 'POST' },
+      );
+      notify(
+        res.sent
+          ? 'eSIM email sent via Mailjet!'
+          : `Mailjet status: ${res.status} (${res.error || ''})`,
+      );
+      await refreshAll();
+    } catch (err: any) {
+      notify(err?.message || 'Mailjet resend failed');
+    }
+  }
+
+  async function retryProvision(orderId: string) {
+    try {
+      await api.adminFetch(secretSlug, adminToken, `/orders/${orderId}/retry-provision`, {
+        method: 'POST',
+      });
+      notify('Order provisioned & Mailjet delivery triggered.');
+      await refreshAll();
+    } catch (err: any) {
+      notify(err?.message || 'Provision retry failed');
+    }
+  }
+
+  async function saveSettings(e: React.FormEvent) {
+    e.preventDefault();
+    await api.adminFetch(secretSlug, adminToken, '/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(settings),
+    });
+    notify('Store settings updated.');
+    await refreshAll();
+  }
+
+  if (gateState === 'checking') {
+    return (
+      <div className="pt-[120px] pb-24 bg-[#f5f6f1] min-h-[75vh] flex items-center justify-center">
+        <span className="font-mono-pt text-xs uppercase text-[#071322]/50">Loading…</span>
+      </div>
+    );
+  }
+
+  if (gateState === 'denied') {
+    return <NotFoundView />;
+  }
+
+  // Secret route verified — show Admin Login if not authenticated yet
+  if (!adminToken) {
+    return (
+      <div className="pt-[115px] pb-24 bg-[#f5f6f1] min-h-[80vh] flex items-center">
+        <div className="pt-container max-w-md">
+          <div className="rounded-[24px] bg-white border border-[#071322]/15 shadow-2xl overflow-hidden">
+            <div className="bg-[#071322] text-white p-7 border-b-4 border-[#c8ff43]">
+              <img src="/ptlogo.png" alt="Pak-Tel" className="h-12 w-auto mb-3" />
+              <span className="font-mono-pt text-[10px] uppercase tracking-widest text-[#c8ff43]">
+                Private Admin Route Verified
+              </span>
+              <h1 className="font-display text-2xl font-semibold mt-1">Pak-Tel Operations</h1>
+            </div>
+
+            <form onSubmit={handleLogin} className="p-7 space-y-4">
+              {!credentialsConfigured && (
+                <div className="rounded-xl bg-[#ffad71]/30 border border-[#ffad71] p-3.5 text-xs text-[#071322]">
+                  <strong>Runtime Secrets Required:</strong> Add <code>ADMIN_EMAIL</code> and{' '}
+                  <code>ADMIN_PASSWORD</code> in Cloudflare Workers → Settings → Variables and
+                  Secrets.
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold mb-1.5">Admin Email / ID</label>
+                <input
+                  type="text"
+                  required
+                  autoComplete="username"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full rounded-xl border border-[#071322]/20 px-4 py-3 text-sm outline-none focus:border-[#071322]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold mb-1.5">Admin Password</label>
+                <input
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full rounded-xl border border-[#071322]/20 px-4 py-3 text-sm outline-none focus:border-[#071322]"
+                />
+              </div>
+
+              {loginError && (
+                <div className="rounded-xl bg-[#ff7a6b]/20 border border-[#ff7a6b] p-3 text-xs font-semibold text-[#7b1e14]">
+                  {loginError}
+                </div>
+              )}
+
               <button
-                onClick={() => setEditingBundle(emptyBundleForm(Number(fxInput) || 303.8602))}
-                className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs sm:text-sm flex items-center gap-1.5"
+                type="submit"
+                disabled={loggingIn}
+                className="pt-btn pt-btn--lime w-full"
               >
-                <Plus className="w-4 h-4" />
-                Add Manual Bundle
+                {loggingIn ? 'Verifying…' : 'Unlock Admin Console ↗'}
               </button>
-
-              <button
-                onClick={handleImportSheet}
-                disabled={busy}
-                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold text-xs sm:text-sm flex items-center gap-1.5"
-              >
-                <Sparkles className="w-4 h-4 text-amber-400" />
-                Load 11 Pak-Tel Reference Plans
-              </button>
-            </div>
-
-            {/* FX Rate Recalculator */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">EUR → PKR:</span>
-              <input
-                type="number"
-                step="0.01"
-                value={fxInput}
-                onChange={(e) => setFxInput(e.target.value)}
-                className="w-28 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white"
-              />
-              <button
-                onClick={handleRecalculateFx}
-                disabled={busy}
-                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-emerald-300 flex items-center gap-1"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                Recalculate Costs
-              </button>
-            </div>
-          </div>
-
-          {/* Bundles Spreadsheet Table */}
-          <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950 text-slate-400 border-b border-slate-800 uppercase tracking-wider text-[11px]">
-                  <tr>
-                    <th className="px-3 py-3">Plan Name</th>
-                    <th className="px-3 py-3">Price (PKR)</th>
-                    <th className="px-3 py-3">Actual</th>
-                    <th className="px-3 py-3">Disc %</th>
-                    <th className="px-3 py-3">Diff</th>
-                    <th className="px-3 py-3">GBs / Days</th>
-                    <th className="px-3 py-3">Cost (PKR)</th>
-                    <th className="px-3 py-3">Commission</th>
-                    <th className="px-3 py-3">Flags</th>
-                    <th className="px-3 py-3">Yesim Plan ID</th>
-                    <th className="px-3 py-3">Active</th>
-                    <th className="px-3 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/70">
-                  {bundles.length === 0 ? (
-                    <tr>
-                      <td colSpan={12} className="px-4 py-10 text-center text-slate-400 text-sm">
-                        No bundles created yet. Click <strong>Add Manual Bundle</strong> or{' '}
-                        <strong>Load 11 Pak-Tel Reference Plans</strong> above.
-                      </td>
-                    </tr>
-                  ) : (
-                    bundles.map((b) => (
-                      <tr key={b.id} className="hover:bg-slate-800/30">
-                        <td className="px-3 py-3 font-bold text-white">{b.name}</td>
-                        <td className="px-3 py-3 font-extrabold text-emerald-400">
-                          {formatPkr(b.pricePkr)}
-                        </td>
-                        <td className="px-3 py-3 text-slate-400 line-through">
-                          {b.actualPricePkr ? formatPkr(b.actualPricePkr) : '—'}
-                        </td>
-                        <td className="px-3 py-3 text-emerald-300 font-semibold">
-                          {b.discountPct ? `${b.discountPct}%` : '—'}
-                        </td>
-                        <td className="px-3 py-3 text-slate-300">
-                          {b.priceDifferencePkr ? formatPkr(b.priceDifferencePkr) : '—'}
-                        </td>
-                        <td className="px-3 py-3 text-slate-200">
-                          {b.dataLabel} • {b.validityDays}d
-                        </td>
-                        <td className="px-3 py-3 text-slate-300">
-                          {b.costPkr != null ? `Rs. ${b.costPkr.toFixed(1)}` : '—'}
-                          {b.costEur != null ? (
-                            <span className="text-slate-500 ml-1">(€{b.costEur})</span>
-                          ) : null}
-                        </td>
-                        <td className="px-3 py-3 font-bold text-teal-300">
-                          {b.commissionPkr != null ? `Rs. ${Math.round(b.commissionPkr)}` : '—'}
-                        </td>
-                        <td className="px-3 py-3 space-x-1">
-                          {b.isMostPopular && (
-                            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold">
-                              Popular
-                            </span>
-                          )}
-                          {b.isReloadable && (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px]">
-                              Reload
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-3 font-mono text-[11px] text-slate-400 max-w-[130px] truncate">
-                          {b.yesimPlanId}
-                        </td>
-                        <td className="px-3 py-3">
-                          <input
-                            type="checkbox"
-                            checked={b.isActive}
-                            onChange={() => handleToggleBundle(b)}
-                            className="accent-emerald-500 cursor-pointer"
-                          />
-                        </td>
-                        <td className="px-3 py-3 text-right space-x-1.5">
-                          <button
-                            onClick={() => openEditModal(b)}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200"
-                            title="Edit Bundle"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteBundle(b)}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400"
-                            title="Delete Bundle"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+            </form>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {/* TAB 2: OVERVIEW DASHBOARD */}
-      {tab === 'overview' && dashboard && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
-            <div className="text-xs text-slate-400">Gross Revenue (PKR)</div>
-            <div className="text-2xl font-black text-emerald-400 mt-1">
-              {formatPkr(dashboard.metrics.totalRevenuePkr)}
-            </div>
-            <div className="text-xs text-slate-500 mt-1">
-              {dashboard.metrics.provisionedOrders} paid orders +{' '}
-              {dashboard.metrics.completedTopUps} top-ups
-            </div>
+  const originUrl = typeof window !== 'undefined' ? window.location.origin : '';
+
+  return (
+    <div className="pt-[104px] pb-20 bg-[#f5f6f1] min-h-screen">
+      <div className="pt-container space-y-6">
+        {/* Top Admin Header */}
+        <div className="rounded-[22px] bg-[#071322] text-white p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <span className="font-mono-pt text-[10px] uppercase tracking-widest text-[#c8ff43]">
+              Secret Admin Console • Runtime Secrets Mode
+            </span>
+            <h1 className="font-display text-2xl sm:text-3xl font-semibold mt-1">
+              Pak-Tel Inventory, Orders &amp; Mailjet Delivery
+            </h1>
           </div>
 
-          <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
-            <div className="text-xs text-slate-400">Est. Net Commission</div>
-            <div className="text-2xl font-black text-teal-300 mt-1">
-              {formatPkr(dashboard.metrics.estimatedCommissionPkr)}
-            </div>
-            <div className="text-xs text-slate-500 mt-1">Based on bundle Cost vs Price</div>
-          </div>
-
-          <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
-            <div className="text-xs text-slate-400">Yesim Partner Balance</div>
-            <div className="text-2xl font-black text-white mt-1">
-              €{dashboard.yesim.balance.toFixed(2)} {dashboard.yesim.currency}
-            </div>
-            <div className="text-xs text-slate-500 mt-1">
-              Mode: {dashboard.yesim.mock ? 'Sandbox Simulation' : 'Live Partner API'}
-            </div>
-          </div>
-
-          <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
-            <div className="text-xs text-slate-400">Active Catalog &amp; eSIMs</div>
-            <div className="text-2xl font-black text-white mt-1">
-              {dashboard.metrics.activeBundles} Plans / {dashboard.metrics.activeEsims} eSIMs
-            </div>
-            <div className="text-xs text-slate-500 mt-1">
-              DPay: {dashboard.dpay.mockMode ? 'Sandbox Mode' : 'Live Production'}
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {(
+              [
+                ['overview', 'Overview'],
+                ['bundles', `Plans (${bundles.length})`],
+                ['orders', `Orders (${orders.length})`],
+                ['esims', `eSIMs (${esims.length})`],
+                ['settings', 'Settings & Webhooks'],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTab(id)}
+                className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-colors ${
+                  tab === id
+                    ? 'bg-[#c8ff43] text-[#071322]'
+                    : 'bg-white/10 text-white/80 hover:bg-white/20'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                sessionStorage.removeItem('paktel_admin_jwt');
+                setAdminToken('');
+              }}
+              className="px-3 py-2 rounded-lg text-xs font-bold bg-[#ff7a6b]/20 text-[#ff7a6b] hover:bg-[#ff7a6b] hover:text-[#071322]"
+            >
+              Sign out
+            </button>
           </div>
         </div>
-      )}
 
-      {/* TAB 3: ORDERS & DPAY */}
-      {tab === 'orders' && (
-        <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs sm:text-sm">
-              <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
+        {toast && (
+          <div className="rounded-xl bg-[#071322] text-[#c8ff43] px-5 py-3 text-xs font-mono-pt font-bold shadow-lg">
+            ✓ {toast}
+          </div>
+        )}
+
+        {/* OVERVIEW TAB */}
+        {tab === 'overview' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+              {[
+                ['Revenue (PKR)', formatPkr(dashboard?.revenuePkr || 0)],
+                ['Paid Orders', String(dashboard?.paidOrdersCount || 0)],
+                ['Provisioned eSIMs', String(dashboard?.activeEsimsCount || 0)],
+                ['Active Plans', String(dashboard?.activeBundlesCount || 0)],
+                ['Mailjet Sent', String(dashboard?.emailsDeliveredCount || 0)],
+              ].map(([label, val]) => (
+                <div
+                  key={label}
+                  className="rounded-2xl bg-white border border-[#071322]/12 p-5"
+                >
+                  <span className="font-mono-pt text-[10px] uppercase text-[#071322]/55">
+                    {label}
+                  </span>
+                  <strong className="font-display text-2xl sm:text-3xl font-bold block mt-2">
+                    {val}
+                  </strong>
+                </div>
+              ))}
+            </div>
+
+            {/* Runtime Variables & Secrets Readiness */}
+            <div className="rounded-2xl bg-white border border-[#071322]/12 p-6 space-y-4">
+              <h2 className="font-display text-xl font-semibold">
+                Cloudflare Runtime Variables &amp; Secrets Status
+              </h2>
+              <p className="text-xs text-[#071322]/65">
+                Secret values are never exposed to the browser or stored in source code. Status
+                below reflects whether each integration key is present at runtime:
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                {[
+                  ['Yesim Partner API (YESIM_API_TOKEN)', dashboard?.runtimeIntegrations?.yesimConfigured],
+                  ['DPay Checkout API (DPAY_API_KEY + SECRET)', dashboard?.runtimeIntegrations?.dpayConfigured],
+                  ['DPay Webhook HMAC (DPAY_WEBHOOK_SECRET)', dashboard?.runtimeIntegrations?.dpayWebhookSecretConfigured],
+                  ['Mailjet Send v3.1 (MAILJET_API_KEY + SECRET + FROM)', dashboard?.runtimeIntegrations?.mailjetConfigured],
+                  ['Mailjet Event Webhook Auth (MAILJET_WEBHOOK_SECRET)', dashboard?.runtimeIntegrations?.mailjetWebhookSecretConfigured],
+                  ['Admin JWT Signing Key (JWT_SECRET)', dashboard?.runtimeIntegrations?.jwtSecretConfigured],
+                ].map(([name, ok]) => (
+                  <div
+                    key={String(name)}
+                    className="rounded-xl bg-[#f5f6f1] border border-[#071322]/10 p-3.5 flex items-center justify-between gap-2"
+                  >
+                    <span className="font-semibold">{name}</span>
+                    <span
+                      className={`font-mono-pt text-[10px] font-bold px-2.5 py-1 rounded-full ${
+                        ok
+                          ? 'bg-[#c8ff43] text-[#071322]'
+                          : 'bg-[#ffad71]/40 text-[#071322]'
+                      }`}
+                    >
+                      {ok ? 'CONFIGURED' : 'NOT SET'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-xl bg-[#071322] text-white p-4 space-y-1.5 text-xs font-mono-pt">
+                <p className="text-[#c8ff43] uppercase text-[10px]">Webhook Callback URLs</p>
+                <p>DPay Webhook (payment.succeeded): {originUrl}/api/webhooks/dpay</p>
+                <p>Mailjet Event Webhook (sent/open/bounce): {originUrl}/api/webhooks/mailjet</p>
+                <p>Yesim Usage Webhook: {originUrl}/api/webhooks/yesim</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* BUNDLES / PLANS CRUD TAB */}
+        {tab === 'bundles' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <form
+              onSubmit={saveBundle}
+              className="lg:col-span-5 rounded-2xl bg-white border border-[#071322]/12 p-6 space-y-3.5 self-start"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="font-display text-xl font-semibold">
+                  {editingId ? 'Edit Plan' : 'Create Manual Plan'}
+                </h2>
+                {editingId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingId(null);
+                      setForm(EMPTY_FORM);
+                    }}
+                    className="text-xs underline font-bold"
+                  >
+                    Cancel edit
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="col-span-2">
+                  <label className="block font-bold mb-1">Plan Title</label>
+                  <input
+                    required
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    placeholder="e.g. 15 GB 30 Days"
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Yesim Package Code</label>
+                  <input
+                    required
+                    value={form.yesimPackageCode}
+                    onChange={(e) => setForm({ ...form, yesimPackageCode: e.target.value })}
+                    placeholder="PK_15GB_30D"
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2 font-mono-pt"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Badge</label>
+                  <input
+                    value={form.badge || ''}
+                    onChange={(e) => setForm({ ...form, badge: e.target.value })}
+                    placeholder="Most popular / Flexible data"
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Country ISO</label>
+                  <input
+                    required
+                    value={form.countryCode}
+                    onChange={(e) =>
+                      setForm({ ...form, countryCode: e.target.value.toUpperCase() })
+                    }
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2 font-mono-pt"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Country Name</label>
+                  <input
+                    required
+                    value={form.countryName}
+                    onChange={(e) => setForm({ ...form, countryName: e.target.value })}
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Data Display</label>
+                  <input
+                    required
+                    value={form.dataDisplay}
+                    onChange={(e) => setForm({ ...form, dataDisplay: e.target.value })}
+                    placeholder="15 GB / Unlimited Data"
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Data (MB)</label>
+                  <input
+                    type="number"
+                    required
+                    value={form.dataMb}
+                    onChange={(e) => setForm({ ...form, dataMb: Number(e.target.value) })}
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2 font-mono-pt"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Validity (Days)</label>
+                  <input
+                    type="number"
+                    required
+                    value={form.validityDays}
+                    onChange={(e) => setForm({ ...form, validityDays: Number(e.target.value) })}
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2 font-mono-pt"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Sort Order</label>
+                  <input
+                    type="number"
+                    value={form.sortOrder}
+                    onChange={(e) => setForm({ ...form, sortOrder: Number(e.target.value) })}
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2 font-mono-pt"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Selling Price (PKR)</label>
+                  <input
+                    type="number"
+                    required
+                    value={form.pricePkr}
+                    onChange={(e) => setForm({ ...form, pricePkr: Number(e.target.value) })}
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2 font-mono-pt font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Actual/Strike Price (PKR)</label>
+                  <input
+                    type="number"
+                    value={form.originalPricePkr || 0}
+                    onChange={(e) =>
+                      setForm({ ...form, originalPricePkr: Number(e.target.value) })
+                    }
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2 font-mono-pt"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-4 pt-1 text-xs font-semibold">
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.reloadable)}
+                    onChange={(e) => setForm({ ...form, reloadable: e.target.checked })}
+                  />
+                  Reloadable
+                </label>
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.unlimited)}
+                    onChange={(e) => setForm({ ...form, unlimited: e.target.checked })}
+                  />
+                  Unlimited
+                </label>
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.hotspotSupported)}
+                    onChange={(e) => setForm({ ...form, hotspotSupported: e.target.checked })}
+                  />
+                  Hotspot
+                </label>
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.enabled)}
+                    onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+                  />
+                  Enabled
+                </label>
+              </div>
+
+              <button type="submit" className="pt-btn pt-btn--lime w-full">
+                {editingId ? 'Save Plan Changes' : 'Add Plan to Live Inventory'}
+              </button>
+            </form>
+
+            <div className="lg:col-span-7 space-y-3">
+              {bundles.map((b) => (
+                <div
+                  key={b.id}
+                  className="rounded-2xl bg-white border border-[#071322]/12 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono-pt text-xs font-bold px-2 py-0.5 rounded bg-[#071322] text-[#c8ff43]">
+                        #{b.sortOrder}
+                      </span>
+                      <strong className="font-display text-base">{b.name}</strong>
+                      <span className="font-mono-pt text-xs text-[#071322]/55">
+                        ({b.yesimPackageCode})
+                      </span>
+                      {!b.enabled && (
+                        <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-[#ff7a6b]/30">
+                          Disabled
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-[#071322]/65 mt-1 font-mono-pt">
+                      {b.countryName} • {b.dataDisplay} • {b.validityDays}d •{' '}
+                      {b.originalPricePkr ? (
+                        <span className="line-through mr-1">{formatPkr(b.originalPricePkr)}</span>
+                      ) : null}
+                      <strong className="text-[#071322]">{formatPkr(b.pricePkr)}</strong>
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(b.id);
+                        setForm({ ...b, originalPricePkr: b.originalPricePkr || 0 });
+                      }}
+                      className="px-3 py-1.5 rounded-lg border border-[#071322]/20 font-bold hover:bg-[#071322] hover:text-white"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleBundle(b)}
+                      className="px-3 py-1.5 rounded-lg border border-[#071322]/20 font-bold"
+                    >
+                      {b.enabled ? 'Disable' : 'Enable'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteBundle(b.id)}
+                      className="px-3 py-1.5 rounded-lg bg-[#ff7a6b]/20 text-[#7b1e14] font-bold"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ORDERS & MAILJET DELIVERY TAB */}
+        {tab === 'orders' && (
+          <div className="rounded-2xl bg-white border border-[#071322]/12 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-[#071322] text-white font-mono-pt text-[10px] uppercase">
                 <tr>
-                  <th className="px-4 py-3">Order #</th>
-                  <th className="px-4 py-3">Customer</th>
-                  <th className="px-4 py-3">Items</th>
+                  <th className="px-4 py-3">Order</th>
+                  <th className="px-4 py-3">Customer Email</th>
+                  <th className="px-4 py-3">Plan / Type</th>
                   <th className="px-4 py-3">Amount</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3 text-right">Admin Actions</th>
+                  <th className="px-4 py-3">Order Status</th>
+                  <th className="px-4 py-3">Mailjet Delivery</th>
+                  <th className="px-4 py-3">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800">
+              <tbody className="divide-y divide-[#071322]/10">
                 {orders.map((o) => (
                   <tr key={o.id}>
-                    <td className="px-4 py-3 font-mono text-xs text-white">{o.orderNumber}</td>
-                    <td className="px-4 py-3 text-slate-300">
-                      <div>{o.customerEmail}</div>
-                      {o.customerPhone && (
-                        <div className="text-xs text-slate-500">{o.customerPhone}</div>
+                    <td className="px-4 py-3 font-mono-pt font-bold">
+                      #{o.id.slice(0, 8).toUpperCase()}
+                      {o.iccid && (
+                        <span className="block text-[10px] text-[#071322]/55">{o.iccid}</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-slate-300 text-xs">
-                      {o.items.map((i) => `${i.quantity}x ${i.bundleName}`).join(', ')}
-                    </td>
-                    <td className="px-4 py-3 font-bold text-emerald-400">
-                      {formatPkr(o.amountPkr)}
-                    </td>
+                    <td className="px-4 py-3">{o.customerEmail}</td>
                     <td className="px-4 py-3">
-                      <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-xs text-slate-200">
-                        {o.status}
+                      <strong>{o.bundleName}</strong>{' '}
+                      <span className="font-mono-pt text-[10px]">({o.kind})</span>
+                    </td>
+                    <td className="px-4 py-3 font-mono-pt font-bold">{formatPkr(o.amountPkr)}</td>
+                    <td className="px-4 py-3 font-mono-pt font-bold">{o.status}</td>
+                    <td className="px-4 py-3 font-mono-pt">
+                      <span className="px-2 py-0.5 rounded bg-[#e9ebe4] font-bold">
+                        {o.emailDeliveryStatus}
                       </span>
-                      {o.lastError && (
-                        <div className="text-[11px] text-rose-400 mt-1 max-w-xs truncate">
-                          {o.lastError}
-                        </div>
+                      {o.emailError && (
+                        <span className="block text-[10px] text-[#7b1e14] mt-0.5">
+                          {o.emailError}
+                        </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right space-x-2">
-                      {(o.status === 'FAILED' ||
-                        o.status === 'AMBIGUOUS' ||
-                        o.status === 'PENDING_PAYMENT') && (
+                    <td className="px-4 py-3 space-x-1.5 whitespace-nowrap">
+                      {o.status === 'PROVISIONED' && (
                         <button
-                          onClick={async () => {
-                            await apiFetch(`/api/admin/orders/${o.id}/retry-provision`, {
-                              method: 'POST',
-                            });
-                            notify(`Provisioned ${o.orderNumber}`);
-                            await loadAll();
-                          }}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs font-semibold"
+                          type="button"
+                          onClick={() => resendMailjetEmail(o.id)}
+                          className="px-2.5 py-1 rounded bg-[#071322] text-[#c8ff43] font-bold"
                         >
-                          Provision / Retry
+                          Resend Mailjet
                         </button>
                       )}
-                      {o.status === 'PROVISIONED' && o.dpaySessionId && (
+                      {o.status !== 'PROVISIONED' && (
                         <button
-                          onClick={async () => {
-                            if (!window.confirm('Issue DPay refund for this order?')) return;
-                            await apiFetch(`/api/admin/orders/${o.id}/refund-dpay`, {
-                              method: 'POST',
-                              body: JSON.stringify({ reason: 'Admin initiated refund' }),
-                            });
-                            notify(`Refunded ${o.orderNumber}`);
-                            await loadAll();
-                          }}
-                          className="px-2.5 py-1 rounded-lg bg-rose-500/15 text-rose-300 text-xs"
+                          type="button"
+                          onClick={() => retryProvision(o.id)}
+                          className="px-2.5 py-1 rounded bg-[#c8ff43] text-[#071322] font-bold"
                         >
-                          Refund
+                          Force Provision
                         </button>
                       )}
                     </td>
@@ -797,707 +758,128 @@ export function AdminPage({ onSettingsChanged }: { onSettingsChanged: () => void
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* TAB 4: ESIMS & BULK VOUCHERS */}
-      {tab === 'esims' && (
-        <div className="space-y-6">
-          <form
-            onSubmit={handleIssueBulk}
-            className="rounded-2xl bg-slate-900 border border-slate-800 p-5 flex flex-wrap items-end gap-4"
-          >
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">
-                Issue Bulk / Voucher eSIMs (Yesim Plan ID)
-              </label>
-              <input
-                type="text"
-                value={bulkPlanId}
-                onChange={(e) => setBulkPlanId(e.target.value)}
-                placeholder="e.g. c9b922d6a687dc41955220eb30283c6e"
-                className="w-72 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Count</label>
-              <input
-                type="number"
-                min={1}
-                max={50}
-                value={bulkCount}
-                onChange={(e) => setBulkCount(Number(e.target.value))}
-                className="w-20 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
-              />
-            </div>
-            <label className="flex items-center gap-2 text-xs text-slate-300 pb-2">
-              <input
-                type="checkbox"
-                checked={bulkVoucher}
-                onChange={(e) => setBulkVoucher(e.target.checked)}
-                className="accent-emerald-500"
-              />
-              Issue as Voucher Codes
-            </label>
-            <button
-              type="submit"
-              disabled={busy}
-              className="px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 font-bold text-xs flex items-center gap-1.5"
-            >
-              <PackagePlus className="w-4 h-4" />
-              Issue Bulk eSIMs
-            </button>
-          </form>
-
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-2.5" />
-              <input
-                type="text"
-                value={esimSearch}
-                onChange={(e) => setEsimSearch(e.target.value)}
-                placeholder="Filter by ICCID, email, voucher..."
-                className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white"
-              />
-            </div>
-          </div>
-
-          <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
-                  <tr>
-                    <th className="px-4 py-3">ICCID</th>
-                    <th className="px-4 py-3">Customer / Voucher</th>
-                    <th className="px-4 py-3">Data Remaining</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Yesim Lifecycle</th>
+        {/* ESIMS TAB */}
+        {tab === 'esims' && (
+          <div className="rounded-2xl bg-white border border-[#071322]/12 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-[#071322] text-white font-mono-pt text-[10px] uppercase">
+                <tr>
+                  <th className="px-4 py-3">ICCID</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Remaining / Total</th>
+                  <th className="px-4 py-3">Expires</th>
+                  <th className="px-4 py-3">Sync</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#071322]/10">
+                {esims.map((e) => (
+                  <tr key={e.id}>
+                    <td className="px-4 py-3 font-mono-pt font-bold">{e.iccid}</td>
+                    <td className="px-4 py-3 font-mono-pt">{e.status}</td>
+                    <td className="px-4 py-3 font-mono-pt">
+                      {formatBytes(e.remainingBytes)} / {formatBytes(e.totalBytes)}
+                    </td>
+                    <td className="px-4 py-3 font-mono-pt">
+                      {e.expiresAt ? new Date(e.expiresAt).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await api.adminFetch(secretSlug, adminToken, `/esims/${e.id}/sync`, {
+                            method: 'POST',
+                          });
+                          notify('Synced with Yesim.');
+                          refreshAll();
+                        }}
+                        className="px-2.5 py-1 rounded border border-[#071322]/25 font-bold"
+                      >
+                        Sync Yesim
+                      </button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800">
-                  {esims
-                    .filter((e) => {
-                      if (!esimSearch.trim()) return true;
-                      const q = esimSearch.toLowerCase();
-                      return (
-                        e.iccid.toLowerCase().includes(q) ||
-                        (e.customerEmail || '').toLowerCase().includes(q) ||
-                        (e.voucherCode || '').toLowerCase().includes(q)
-                      );
-                    })
-                    .map((e) => (
-                      <tr key={e.id}>
-                        <td className="px-4 py-3 font-mono font-bold text-white">{e.iccid}</td>
-                        <td className="px-4 py-3 text-slate-300">
-                          {e.customerEmail || (e.voucherCode ? `Voucher: ${e.voucherCode}` : '—')}
-                        </td>
-                        <td className="px-4 py-3 text-slate-300">
-                          {e.isUnlimited
-                            ? `Unlimited (Used ${formatMbToReadable(e.dataUsedMb)})`
-                            : `${formatMbToReadable(e.dataLeftMb)} / ${formatMbToReadable(e.dataPackageMb)}`}
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                              e.isDeleted
-                                ? 'bg-rose-500/15 text-rose-300'
-                                : 'bg-emerald-500/15 text-emerald-300'
-                            }`}
-                          >
-                            {e.isDeleted ? 'Replaced' : e.statusQr}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right space-x-1.5">
-                          <button
-                            onClick={async () => {
-                              await apiFetch(`/api/admin/esims/${e.id}/sync`, { method: 'POST' });
-                              notify(`Synced ${e.iccid}`);
-                              await loadAll();
-                            }}
-                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
-                          >
-                            Sync
-                          </button>
-                          {!e.isDeleted && (
-                            <button
-                              onClick={async () => {
-                                if (
-                                  !window.confirm(
-                                    `Replace eSIM ${e.iccid} via Yesim /change_esim (transfers active plan)?`,
-                                  )
-                                )
-                                  return;
-                                await apiFetch(`/api/admin/esims/${e.id}/replace`, {
-                                  method: 'POST',
-                                });
-                                notify(`Issued replacement eSIM!`);
-                                await loadAll();
-                              }}
-                              className="px-2.5 py-1 rounded bg-amber-500/20 text-amber-300"
-                            >
-                              Replace
-                            </button>
-                          )}
-                          {!e.isDeleted && e.activePlanId && (
-                            <button
-                              onClick={async () => {
-                                if (!window.confirm(`Cancel active plan on ${e.iccid}?`)) return;
-                                await apiFetch(`/api/admin/esims/${e.id}/cancel-plan`, {
-                                  method: 'POST',
-                                });
-                                notify(`Cancelled active plan on ${e.iccid}`);
-                                await loadAll();
-                              }}
-                              className="px-2.5 py-1 rounded bg-rose-500/15 text-rose-300"
-                            >
-                              Cancel Plan
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* TAB 5: SETTINGS & WEBHOOKS */}
-      {tab === 'settings' && settingsForm && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <form
-            onSubmit={handleSaveSettings}
-            className="lg:col-span-2 rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4"
-          >
-            <h2 className="text-lg font-bold text-white">
-              Storefront, Yesim Partner &amp; DPay Configuration
-            </h2>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Store Name</label>
-                <input
-                  type="text"
-                  value={settingsForm.storeName}
-                  onChange={(e) =>
-                    setSettingsForm({ ...settingsForm, storeName: e.target.value })
-                  }
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">
-                  WhatsApp Support Number
-                </label>
-                <input
-                  type="text"
-                  value={settingsForm.whatsappNumber}
-                  onChange={(e) =>
-                    setSettingsForm({ ...settingsForm, whatsappNumber: e.target.value })
-                  }
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">
-                Announcement Ticker Message
-              </label>
-              <input
-                type="text"
-                value={settingsForm.announcementTicker}
-                onChange={(e) =>
-                  setSettingsForm({ ...settingsForm, announcementTicker: e.target.value })
-                }
-                className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-              />
-            </div>
-
-            <div className="pt-3 border-t border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Yesim API Token</label>
-                <input
-                  type="password"
-                  value={settingsForm.yesimApiToken}
-                  onChange={(e) =>
-                    setSettingsForm({ ...settingsForm, yesimApiToken: e.target.value })
-                  }
-                  placeholder="Yesim Partner ?token=..."
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                />
-                <label className="flex items-center gap-2 text-xs text-slate-300 mt-2">
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.yesimMockMode}
-                    onChange={(e) =>
-                      setSettingsForm({ ...settingsForm, yesimMockMode: e.target.checked })
-                    }
-                    className="accent-emerald-500"
-                  />
-                  Yesim Sandbox / Mock Mode
-                </label>
-              </div>
-
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">
-                  DPay API Key (Bearer dpay_...)
-                </label>
-                <input
-                  type="password"
-                  value={settingsForm.dpayApiKey}
-                  onChange={(e) =>
-                    setSettingsForm({ ...settingsForm, dpayApiKey: e.target.value })
-                  }
-                  placeholder="dpay_live_... or dpay_test_..."
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                />
-                <label className="flex items-center gap-2 text-xs text-slate-300 mt-2">
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.dpayMockMode}
-                    onChange={(e) =>
-                      setSettingsForm({ ...settingsForm, dpayMockMode: e.target.checked })
-                    }
-                    className="accent-emerald-500"
-                  />
-                  DPay Sandbox / Mock Mode
-                </label>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">
-                DPay Webhook Signing Secret (HMAC-SHA256)
-              </label>
-              <input
-                type="password"
-                value={settingsForm.dpayWebhookSecret}
-                onChange={(e) =>
-                  setSettingsForm({ ...settingsForm, dpayWebhookSecret: e.target.value })
-                }
-                className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-sm"
+        {/* SETTINGS & WEBHOOKS TAB */}
+        {tab === 'settings' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <form
+              onSubmit={saveSettings}
+              className="lg:col-span-5 rounded-2xl bg-white border border-[#071322]/12 p-6 space-y-4 self-start"
             >
-              Save Settings
-            </button>
-          </form>
+              <h2 className="font-display text-xl font-semibold">Store Ticker &amp; FX Settings</h2>
+              <div>
+                <label className="block text-xs font-bold mb-1">Header Updates Ticker Text</label>
+                <textarea
+                  rows={3}
+                  value={settings.storeNotice || ''}
+                  onChange={(e) => setSettings({ ...settings, storeNotice: e.target.value })}
+                  className="w-full rounded-xl border border-[#071322]/20 p-3 text-xs"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="block font-bold mb-1">USD → PKR Rate</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={settings.fxRateUsdToPkr}
+                    onChange={(e) =>
+                      setSettings({ ...settings, fxRateUsdToPkr: Number(e.target.value) })
+                    }
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2 font-mono-pt"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold mb-1">Default Margin (%)</label>
+                  <input
+                    type="number"
+                    value={settings.defaultMarginPercent}
+                    onChange={(e) =>
+                      setSettings({ ...settings, defaultMarginPercent: Number(e.target.value) })
+                    }
+                    className="w-full rounded-lg border border-[#071322]/20 px-3 py-2 font-mono-pt"
+                  />
+                </div>
+              </div>
+              <button type="submit" className="pt-btn pt-btn--lime w-full">
+                Save Store Settings
+              </button>
+            </form>
 
-          <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4">
-            <h3 className="text-base font-bold text-white">Recent Webhook Events</h3>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
+            <div className="lg:col-span-7 rounded-2xl bg-white border border-[#071322]/12 p-6">
+              <h2 className="font-display text-xl font-semibold mb-4">
+                Recent Webhook Events (DPay • Mailjet • Yesim)
+              </h2>
               {webhooks.length === 0 ? (
-                <div className="text-xs text-slate-500">No webhook events recorded yet.</div>
+                <p className="text-xs text-[#071322]/55">No webhook deliveries recorded yet.</p>
               ) : (
-                webhooks.map((w) => (
-                  <div
-                    key={w.id}
-                    className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-emerald-400 uppercase">{w.source}</span>
-                      <span className="text-slate-500">
-                        {new Date(w.receivedAt).toLocaleTimeString()}
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {webhooks.map((w) => (
+                    <div
+                      key={w.id}
+                      className="rounded-xl bg-[#f5f6f1] px-4 py-2.5 flex items-center justify-between text-xs font-mono-pt"
+                    >
+                      <span>
+                        <strong>[{w.provider}]</strong> {w.eventType}
+                      </span>
+                      <span className="text-[#071322]/55">
+                        {new Date(w.processedAt).toLocaleString()}
                       </span>
                     </div>
-                    <div className="font-mono text-slate-200 mt-0.5">{w.eventType}</div>
-                    {w.error && <div className="text-rose-400 mt-1">{w.error}</div>}
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* BUNDLE CREATE / EDIT MODAL */}
-      {editingBundle && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm overflow-y-auto">
-          <div className="w-full max-w-2xl rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl my-8 overflow-hidden">
-            <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-white">
-                {editingBundle.id ? `Edit Bundle: ${editingBundle.name}` : 'Create Manual Bundle'}
-              </h3>
-              <button
-                onClick={() => setEditingBundle(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveBundle} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
-              {/* Yesim Plan ID + Live Picker */}
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-emerald-400">
-                    Yesim Partner Plan ID (32-char hex) *
-                  </label>
-                  <button
-                    type="button"
-                    onClick={openYesimBrowser}
-                    className="px-3 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-xs font-bold"
-                  >
-                    Browse Yesim Plans
-                  </button>
-                </div>
-                <input
-                  type="text"
-                  required
-                  value={editingBundle.yesimPlanId}
-                  onChange={(e) =>
-                    setEditingBundle({ ...editingBundle, yesimPlanId: e.target.value })
-                  }
-                  placeholder="e.g. e299479f253a1a82968fd070df904313"
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-700 font-mono text-xs text-white"
-                />
-              </div>
-
-              {showYesimPicker && (
-                <div className="p-4 rounded-xl bg-slate-950 border border-emerald-500/40 space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <input
-                      type="text"
-                      value={yesimFilterText}
-                      onChange={(e) => setYesimFilterText(e.target.value)}
-                      placeholder="Filter Yesim plans (Pakistan, UAE, Turkey...)"
-                      className="flex-1 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowYesimPicker(false)}
-                      className="text-xs text-slate-400 hover:text-white"
-                    >
-                      Close
-                    </button>
-                  </div>
-                  <div className="max-h-48 overflow-y-auto divide-y divide-slate-800">
-                    {yesimPlans
-                      .filter(
-                        (p) =>
-                          !yesimFilterText ||
-                          p.name.toLowerCase().includes(yesimFilterText.toLowerCase()) ||
-                          p.countries_included
-                            .toLowerCase()
-                            .includes(yesimFilterText.toLowerCase()),
-                      )
-                      .map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => applyYesimPlanToForm(p)}
-                          className="w-full py-2 px-2 text-left hover:bg-slate-900 flex items-center justify-between text-xs"
-                        >
-                          <div>
-                            <span className="font-bold text-white">{p.name}</span>
-                            <span className="text-slate-400 ml-2">
-                              ({p.data} {p.data === 'Unlimited' ? '' : 'GB'} • {p.days}d)
-                            </span>
-                          </div>
-                          <span className="font-mono text-emerald-400">
-                            €{p.price} {p.currency}
-                          </span>
-                        </button>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Sheet Row Fields */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="sm:col-span-2">
-                  <label className="block text-xs text-slate-400 mb-1">Plan Name *</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingBundle.name}
-                    onChange={(e) => setEditingBundle({ ...editingBundle, name: e.target.value })}
-                    placeholder="15 GB 30 Days"
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Sort Order</label>
-                  <input
-                    type="number"
-                    value={editingBundle.sortOrder}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, sortOrder: Number(e.target.value) })
-                    }
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Price (PKR) *</label>
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    value={editingBundle.pricePkr}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, pricePkr: Number(e.target.value) })
-                    }
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm font-bold text-emerald-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Actual Price (PKR)</label>
-                  <input
-                    type="number"
-                    value={editingBundle.actualPricePkr}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, actualPricePkr: e.target.value })
-                    }
-                    placeholder="Auto strikethrough"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Discount % (Auto)</label>
-                  <input
-                    type="number"
-                    value={editingBundle.discountPct}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, discountPct: e.target.value })
-                    }
-                    placeholder="Auto"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Price Diff (Auto)</label>
-                  <input
-                    type="number"
-                    value={editingBundle.priceDifferencePkr}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, priceDifferencePkr: e.target.value })
-                    }
-                    placeholder="Auto"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">GBs Label *</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingBundle.dataLabel}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, dataLabel: e.target.value })
-                    }
-                    placeholder="15 GB or Unlimited Data"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Numeric GB</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    disabled={editingBundle.isUnlimited}
-                    value={editingBundle.dataGb}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, dataGb: e.target.value })
-                    }
-                    placeholder="15"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white disabled:opacity-40"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Validity Days *</label>
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    value={editingBundle.validityDays}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, validityDays: Number(e.target.value) })
-                    }
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Country ISO2</label>
-                  <input
-                    type="text"
-                    value={editingBundle.countryCode}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, countryCode: e.target.value })
-                    }
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-              </div>
-
-              {/* Wholesale Cost & Commission Row (Google Sheet Parity) */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-800">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Cost (EUR)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={editingBundle.costEur}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, costEur: e.target.value })
-                    }
-                    placeholder="6.42"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">EUR to PKR</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={editingBundle.eurToPkr}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, eurToPkr: Number(e.target.value) })
-                    }
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Cost (PKR)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={editingBundle.costPkr}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, costPkr: e.target.value })
-                    }
-                    placeholder="Auto from EUR"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Commission (PKR)</label>
-                  <input
-                    type="number"
-                    step="1"
-                    value={editingBundle.commissionPkr}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, commissionPkr: e.target.value })
-                    }
-                    placeholder="Auto (Price - Cost)"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-teal-300"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Contact Number</label>
-                  <input
-                    type="text"
-                    value={editingBundle.contact}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, contact: e.target.value })
-                    }
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Promo Message</label>
-                  <input
-                    type="text"
-                    value={editingBundle.message}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, message: e.target.value })
-                    }
-                    placeholder="Optional plan note"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-5 pt-2">
-                <label className="flex items-center gap-2 text-xs text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={editingBundle.isUnlimited}
-                    onChange={(e) =>
-                      setEditingBundle({
-                        ...editingBundle,
-                        isUnlimited: e.target.checked,
-                        dataLabel: e.target.checked ? 'Unlimited Data' : editingBundle.dataLabel,
-                      })
-                    }
-                    className="accent-emerald-500"
-                  />
-                  Unlimited Data
-                </label>
-
-                <label className="flex items-center gap-2 text-xs text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={editingBundle.isReloadable}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, isReloadable: e.target.checked })
-                    }
-                    className="accent-emerald-500"
-                  />
-                  Reloadable
-                </label>
-
-                <label className="flex items-center gap-2 text-xs text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={editingBundle.isMostPopular}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, isMostPopular: e.target.checked })
-                    }
-                    className="accent-emerald-500"
-                  />
-                  Most Popular Badge
-                </label>
-
-                <label className="flex items-center gap-2 text-xs text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={editingBundle.isActive}
-                    onChange={(e) =>
-                      setEditingBundle({ ...editingBundle, isActive: e.target.checked })
-                    }
-                    className="accent-emerald-500"
-                  />
-                  Published on Storefront
-                </label>
-              </div>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setEditingBundle(null)}
-                  className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs flex items-center gap-1.5"
-                >
-                  {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                  {editingBundle.id ? 'Save Changes' : 'Create Bundle'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

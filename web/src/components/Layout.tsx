@@ -1,218 +1,226 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import {
-  MessageCircle,
-  QrCode,
-  ShieldCheck,
-  Smartphone,
-  User,
-  Wifi,
-  LogOut,
-} from 'lucide-react';
-import type { StoreConfig } from '../lib/api';
-import { useAuth } from '../lib/auth';
+import { api, StoreConfig } from '../lib/api';
 
-export function Layout({
-  config,
-  children,
-}: {
-  config: StoreConfig | null;
-  children: React.ReactNode;
-}) {
-  const { user, logout } = useAuth();
+export const StoreContext = React.createContext<StoreConfig>({
+  storeName: 'Pak-Tel eSIM',
+  currency: 'PKR',
+  paymentProvider: 'DPAY',
+  supportWhatsapp: '923259717066',
+  storeNotice:
+    "Welcome to Pak-tel.com 📱 PTA Blocked Phone? Need mobile data? 🌐 Contact us and stay connected! 🚀 📲 Pak-tel | Pakistan's Cheapest Data eSIM Provider 🇵🇰📶",
+  compatibilityBrands: 10,
+});
+
+export function Layout({ children }: { children: React.ReactNode }) {
+  const [scrolled, setScrolled] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [config, setConfig] = useState<StoreConfig>({
+    storeName: 'Pak-Tel eSIM',
+    currency: 'PKR',
+    paymentProvider: 'DPAY',
+    supportWhatsapp: '923259717066',
+    storeNotice:
+      "Welcome to Pak-tel.com 📱 PTA Blocked Phone? Need mobile data? 🌐 Contact us and stay connected! 🚀 📲 Pak-tel | Pakistan's Cheapest Data eSIM Provider 🇵🇰📶",
+    compatibilityBrands: 10,
+  });
   const location = useLocation();
-  const storeName = config?.storeName || 'Pak-Tel';
-  const ticker =
-    config?.announcementTicker ||
-    "Welcome to Pak-tel.com 📱 PTA Blocked Phone? Need mobile data? 🌐 Contact us and stay connected! 🚀 📲 Pak-tel | Pakistan's Cheapest Data eSIM Provider 🇵🇰📶";
-  const whatsappClean = (config?.whatsappNumber || '923259717066').replace(/\D/g, '');
-  const whatsappUrl = `https://wa.me/${whatsappClean.startsWith('92') ? whatsappClean : `92${whatsappClean.replace(/^0/, '')}`}`;
 
-  const isActive = (path: string) =>
-    location.pathname === path
-      ? 'text-emerald-400 font-semibold'
-      : 'text-slate-300 hover:text-white';
+  useEffect(() => {
+    api
+      .getStoreConfig()
+      .then(setConfig)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 18);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname, location.hash]);
+
+  const isMyEsim = location.pathname.startsWith('/my-esim');
+  const waHref = `https://wa.me/${config.supportWhatsapp}?text=${encodeURIComponent(
+    'Hi Pak-Tel, I have a question about eSIM data plans.',
+  )}`;
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
-      {/* Announcement Ticker */}
-      <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-emerald-900 border-b border-emerald-500/20 overflow-hidden py-2">
-        <div className="whitespace-nowrap flex animate-marquee text-xs sm:text-sm font-medium text-emerald-100">
-          <span className="mx-8">{ticker}</span>
-          <span className="mx-8">{ticker}</span>
-        </div>
-      </div>
-
-      {/* Main Header */}
-      <header className="sticky top-0 z-40 backdrop-blur-xl bg-slate-950/85 border-b border-slate-800/80">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          <Link to="/" className="flex items-center gap-2.5 group">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <Wifi className="w-5 h-5 text-slate-950 stroke-[2.5]" />
-            </div>
-            <div>
-              <span className="text-lg font-extrabold tracking-tight text-white">
-                {storeName}
-              </span>
-              <span className="hidden sm:inline-block ml-2 text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                5G / LTE eSIM
-              </span>
-            </div>
-          </Link>
-
-          <nav className="hidden md:flex items-center gap-6 text-sm">
-            <Link to="/" className={isActive('/')}>
-              Data Plans
-            </Link>
-            <Link
-              to="/my-esim"
-              className={`flex items-center gap-1.5 ${isActive('/my-esim')}`}
-            >
-              <QrCode className="w-4 h-4 text-emerald-400" />
-              Check Balance / Top-Up
-            </Link>
-            <a
-              href="/#compatibility"
-              className="text-slate-300 hover:text-white flex items-center gap-1.5"
-            >
-              <Smartphone className="w-4 h-4 text-teal-400" />
-              Device Check
-            </a>
-            <a href="/#faq" className="text-slate-300 hover:text-white">
-              FAQ
-            </a>
-          </nav>
-
-          <div className="flex items-center gap-2.5">
-            <Link
-              to="/my-esim"
-              className="md:hidden px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-medium text-emerald-300 flex items-center gap-1"
-            >
-              <QrCode className="w-3.5 h-3.5" />
-              ICCID
+    <StoreContext.Provider value={config}>
+      <div className="min-h-screen flex flex-col bg-[#f5f6f1] text-[#071322]">
+        {/* Fixed Frosted Ink Header matching pak-tel.com */}
+        <header className={`pt-header ${scrolled ? 'is-scrolled' : ''}`}>
+          <div className="pt-container flex items-center justify-between gap-5 min-h-[84px]">
+            <Link to="/" className="inline-flex items-center gap-3 shrink-0" aria-label="Pak-Tel Home">
+              <img
+                src="/ptlogo.png"
+                alt="Pak-Tel eSIM"
+                className="h-[58px] md:h-[64px] w-auto object-contain"
+              />
             </Link>
 
-            {user?.role === 'ADMIN' && (
-              <Link
-                to="/admin"
-                className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition"
-              >
-                <ShieldCheck className="w-4 h-4" />
-                Admin
-              </Link>
-            )}
+            <nav className="hidden lg:flex items-center gap-8 ml-auto text-[13px] font-semibold text-[#eff7ff]/75">
+              <a href="/#plans" className="hover:text-[#c8ff43] transition-colors">
+                Plans
+              </a>
+              <a href="/#how" className="hover:text-[#c8ff43] transition-colors">
+                How it works
+              </a>
+              <a href="/#why" className="hover:text-[#c8ff43] transition-colors">
+                Why Pak-Tel
+              </a>
+              <a href="/#compatibility" className="hover:text-[#c8ff43] transition-colors">
+                Compatibility
+              </a>
+              <a href="/#faq" className="hover:text-[#c8ff43] transition-colors">
+                FAQ
+              </a>
+            </nav>
 
-            {user ? (
-              <div className="flex items-center gap-2">
-                <Link
-                  to="/account"
-                  className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs sm:text-sm font-medium text-slate-200 flex items-center gap-1.5"
-                >
-                  <User className="w-4 h-4 text-emerald-400" />
-                  <span className="hidden sm:inline max-w-[120px] truncate">
-                    {user.name || user.email.split('@')[0]}
-                  </span>
+            <div className="hidden sm:flex items-center gap-4 ml-4">
+              <div className="hidden xl:inline-flex items-center gap-2 font-mono-pt text-[10px] tracking-[0.05em] uppercase text-[#ecf6ff]/70">
+                <span className="pt-live-dot" />
+                Live Inventory
+              </div>
+
+              {isMyEsim ? (
+                <Link to="/#plans" className="pt-btn pt-btn--ghost-light pt-btn--small">
+                  Browse Data Plans ↗
                 </Link>
-                <button
-                  onClick={() => logout()}
-                  title="Sign Out"
-                  className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-rose-400 transition"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <Link
-                to="/login"
-                className="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs sm:text-sm transition shadow-sm shadow-emerald-500/20"
-              >
-                Sign In
-              </Link>
-            )}
-          </div>
-        </div>
-      </header>
+              ) : (
+                <Link to="/my-esim" className="pt-btn pt-btn--ghost-light pt-btn--small">
+                  eSIM Top-up ↗
+                </Link>
+              )}
 
-      {/* Main Content */}
-      <main className="flex-1">{children}</main>
-
-      {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950 py-12 mt-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8 text-sm text-slate-400">
-          <div className="md:col-span-2">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-7 h-7 rounded-lg bg-emerald-500 flex items-center justify-center">
-                <Wifi className="w-4 h-4 text-slate-950 stroke-[2.5]" />
-              </div>
-              <span className="text-base font-bold text-white">{storeName}</span>
+              <a href="/#plans" className="pt-btn pt-btn--lime pt-btn--small">
+                Shop Plans ↗
+              </a>
             </div>
-            <p className="text-slate-400 max-w-md leading-relaxed">
-              {config?.tagline || "Pakistan's Cheapest Data eSIM Provider"}. Instant 5G/4G/LTE
-              mobile data for PTA-blocked and unlocked eSIM smartphones. Powered by Yesim global
-              carrier infrastructure &amp; DPay instant PKR checkout.
-            </p>
+
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen((v) => !v)}
+              className="sm:hidden inline-flex items-center justify-center w-10 h-10 rounded-lg border border-white/20 text-white"
+              aria-label="Toggle Menu"
+            >
+              {mobileMenuOpen ? '✕' : '☰'}
+            </button>
           </div>
 
-          <div>
-            <h4 className="font-semibold text-white mb-3">Self-Service</h4>
-            <ul className="space-y-2">
-              <li>
-                <Link to="/" className="hover:text-emerald-400 transition">
-                  Browse Data Bundles
+          {mobileMenuOpen && (
+            <div className="sm:hidden border-t border-white/10 bg-[#071322] px-6 py-5 space-y-3 text-sm">
+              <a href="/#plans" className="block py-2 text-white/85 hover:text-[#c8ff43]">
+                Plans
+              </a>
+              <a href="/#how" className="block py-2 text-white/85 hover:text-[#c8ff43]">
+                How it works
+              </a>
+              <a href="/#why" className="block py-2 text-white/85 hover:text-[#c8ff43]">
+                Why Pak-Tel
+              </a>
+              <a href="/#compatibility" className="block py-2 text-white/85 hover:text-[#c8ff43]">
+                Compatibility
+              </a>
+              <a href="/#faq" className="block py-2 text-white/85 hover:text-[#c8ff43]">
+                FAQ
+              </a>
+              <div className="pt-2 flex flex-col gap-2.5">
+                <Link to="/my-esim" className="pt-btn pt-btn--ghost-light w-full">
+                  eSIM Top-up / Check Balance ↗
                 </Link>
-              </li>
-              <li>
-                <Link to="/my-esim" className="hover:text-emerald-400 transition">
-                  Check ICCID Balance &amp; Reload
-                </Link>
-              </li>
-              <li>
-                <a href="/#compatibility" className="hover:text-emerald-400 transition">
-                  Supported Smartphones
+                <a href="/#plans" className="pt-btn pt-btn--lime w-full">
+                  Shop Data Plans ↗
                 </a>
-              </li>
-              <li>
-                <Link to="/admin" className="hover:text-emerald-400 transition">
-                  Admin Console
-                </Link>
-              </li>
-            </ul>
-          </div>
+              </div>
+            </div>
+          )}
+        </header>
 
-          <div>
-            <h4 className="font-semibold text-white mb-3">24/7 Support</h4>
-            <ul className="space-y-2">
-              <li>
+        <main className="flex-1">{children}</main>
+
+        {/* Footer matching pak-tel.com */}
+        <footer className="bg-[#071322] text-white border-t border-white/10">
+          <div className="pt-container py-16">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-10 items-start">
+              <div className="md:col-span-5 space-y-4">
+                <img
+                  src="/ptlogo.png"
+                  alt="Pak-Tel eSIM"
+                  className="h-[62px] w-auto object-contain"
+                />
+                <p className="text-sm text-[#e4f1fa]/65 max-w-sm leading-relaxed">
+                  Flexible digital eSIM data for Pakistan and beyond. No store queues, no tiny SIM
+                  trays — pay securely in PKR and receive your QR code straight in your email.
+                </p>
+                <div className="inline-flex items-center gap-2 font-mono-pt text-[11px] uppercase tracking-wider text-[#c8ff43]">
+                  <span className="pt-live-dot" />
+                  Instant Automated Email Delivery
+                </div>
+              </div>
+
+              <div className="md:col-span-3 space-y-2.5 text-sm">
+                <p className="font-mono-pt text-[10px] uppercase tracking-[0.12em] text-white/45 mb-3">
+                  Explore
+                </p>
+                <a href="/#plans" className="block text-white/75 hover:text-[#c8ff43]">
+                  Data Plans
+                </a>
+                <Link to="/my-esim" className="block text-white/75 hover:text-[#c8ff43]">
+                  ICCID Balance &amp; Top-up
+                </Link>
+                <a href="/#compatibility" className="block text-white/75 hover:text-[#c8ff43]">
+                  Phone Compatibility
+                </a>
+                <a href="/#how" className="block text-white/75 hover:text-[#c8ff43]">
+                  How Activation Works
+                </a>
+                <a href="/#faq" className="block text-white/75 hover:text-[#c8ff43]">
+                  FAQ
+                </a>
+              </div>
+
+              <div className="md:col-span-4 space-y-3 text-sm">
+                <p className="font-mono-pt text-[10px] uppercase tracking-[0.12em] text-white/45 mb-3">
+                  Checkout &amp; Support
+                </p>
+                <p className="text-white/70 text-xs leading-relaxed">
+                  Pay in PKR via DPay (Easypaisa, JazzCash, Raast, or Bank Card). Once payment
+                  succeeds, your eSIM QR code &amp; one-tap install link are sent immediately to
+                  your email.
+                </p>
                 <a
-                  href={whatsappUrl}
+                  href={waHref}
                   target="_blank"
                   rel="noreferrer"
-                  className="hover:text-emerald-400 transition flex items-center gap-1.5"
+                  className="pt-btn pt-btn--ghost-light pt-btn--small mt-2"
                 >
-                  <MessageCircle className="w-4 h-4 text-emerald-400" />
-                  WhatsApp: +{whatsappClean}
+                  24/7 WhatsApp Support ↗
                 </a>
-              </li>
-              <li>Email: {config?.supportEmail || 'support@pak-tel.com'}</li>
-              <li className="text-xs text-slate-500 pt-2">
-                Payments secured by DPay Pakistan (Raast / IBFT / Cards)
-              </li>
-            </ul>
-          </div>
-        </div>
-      </footer>
+              </div>
+            </div>
 
-      {/* Floating WhatsApp Support Button */}
-      <a
-        href={whatsappUrl}
-        target="_blank"
-        rel="noreferrer"
-        aria-label="Chat on WhatsApp"
-        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 px-4 py-3 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm shadow-xl shadow-emerald-500/30 transition transform hover:-translate-y-0.5"
-      >
-        <MessageCircle className="w-5 h-5 fill-slate-950/10" />
-        <span className="hidden sm:inline">WhatsApp Help</span>
-      </a>
-    </div>
+            <div className="mt-12 pt-6 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-white/45 font-mono-pt">
+              <span>© {new Date().getFullYear()} Pak-Tel Digital Data eSIM. All rights reserved.</span>
+              <span>Data-first connectivity • PKR Checkout</span>
+            </div>
+          </div>
+        </footer>
+
+        {/* Floating WhatsApp Support Button */}
+        <a
+          href={waHref}
+          target="_blank"
+          rel="noreferrer"
+          className="fixed bottom-5 right-5 z-40 inline-flex items-center gap-2.5 rounded-full bg-[#071322] text-white border border-[#c8ff43]/45 px-4 py-3 text-xs font-bold shadow-2xl hover:bg-[#c8ff43] hover:text-[#071322] transition-colors"
+        >
+          <span className="pt-live-dot" />
+          Chat with us
+        </a>
+      </div>
+    </StoreContext.Provider>
   );
 }

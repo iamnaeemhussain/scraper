@@ -1,570 +1,972 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import {
-  CheckCircle2,
-  ChevronDown,
-  Flame,
-  Globe2,
-  QrCode,
-  RefreshCw,
-  Search,
-  ShieldCheck,
-  Smartphone,
-  Sparkles,
-  Wifi,
-  Zap,
-} from 'lucide-react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { CheckoutModal } from '../components/CheckoutModal';
-import {
-  apiFetch,
-  DeviceCategory,
-  formatPkr,
-  PublicBundle,
-  StoreConfig,
-} from '../lib/api';
-import { useAuth } from '../lib/auth';
+import { StoreContext } from '../components/Layout';
+import { api, Bundle, CompatibleDevice, formatPkr } from '../lib/api';
 
-const CATEGORIES = [
-  { id: 'all', label: 'All Plans' },
-  { id: 'under1', label: 'Under 1 GB' },
-  { id: '1to5', label: '1 – 5 GB' },
-  { id: '5to10', label: '5 – 10 GB' },
-  { id: '10plus', label: '10 GB+' },
-  { id: 'unlimited', label: 'Unlimited' },
+const BRANDS = [
+  { name: 'Apple', glyph: 'A' },
+  { name: 'Samsung', glyph: 'S' },
+  { name: 'Google', glyph: 'G' },
+  { name: 'Xiaomi', glyph: 'Mi' },
+  { name: 'Huawei', glyph: 'H' },
+  { name: 'Motorola', glyph: 'M' },
+  { name: 'OnePlus', glyph: '1+' },
+  { name: 'Oppo', glyph: 'O' },
+  { name: 'Sony', glyph: 'X' },
+  { name: 'Honor', glyph: 'Hn' },
 ];
 
 const FAQS = [
   {
-    q: 'Does Pak-Tel eSIM work on Non-PTA / PTA-blocked iPhones & Androids?',
-    a: 'Yes! Pak-Tel data eSIMs operate via international carrier roaming agreements on local 4G/LTE/5G networks in Pakistan, allowing non-PTA eSIM-compatible devices to enjoy fast mobile internet, WhatsApp calls, hotspot sharing, and apps without carrying a second device.',
+    q: 'What is an eSIM?',
+    a: 'An eSIM is a digital SIM built directly into your phone. It lets you activate a mobile data plan by scanning a QR code — no physical plastic SIM card required.',
   },
   {
-    q: 'How fast do I receive my eSIM QR code after paying via DPay?',
-    a: 'Immediately! As soon as DPay confirms your PKR payment (via Raast, JazzCash, Easypaisa, or Bank Card), our automated Yesim Partner engine issues your QR code, iPhone 1-tap install link, and LPA activation string right on screen and via email.',
+    q: 'How do I buy a Pak-Tel plan?',
+    a: 'Pick any plan above, tap "Get this plan ↗", enter your email address, and complete payment in PKR via DPay. No account creation is required — your eSIM QR code is delivered automatically to your email as soon as payment succeeds.',
   },
   {
-    q: 'Can I use Personal Hotspot & Wi-Fi Tethering?',
-    a: 'Yes, Personal Hotspot is enabled on Pak-Tel data plans so you can share mobile data with your laptop or secondary phone.',
+    q: 'How quickly will I receive my eSIM?',
+    a: 'Immediately after payment confirmation! Once DPay confirms payment.succeeded, our system provisions your eSIM and delivers the QR code and one-tap install link straight to your email via Mailjet (and right on your order receipt page).',
   },
   {
-    q: 'Can I reload / top up my existing eSIM instead of installing a new QR code?',
-    a: 'Absolutely! Every reloadable plan lets you keep the same ICCID installed on your phone. Just visit "Check Balance / Top-Up", enter your 19-digit ICCID, and add a new data bundle in seconds.',
+    q: 'Do Pak-Tel plans include calls and SMS?',
+    a: 'These are data-only eSIM plans. Voice and SMS are not included unless explicitly stated on a plan. You can keep using WhatsApp, FaceTime, and all internet-based calling apps over your Pak-Tel data connection.',
   },
   {
-    q: 'How can I verify if my phone supports eSIM before buying?',
-    a: 'Dial *#06# on your phone keypad — if you see a 32-digit EID barcode/number, your phone hardware supports eSIM! Make sure your device is also carrier-unlocked, or check our Supported Devices tool above.',
+    q: 'How do I activate my eSIM?',
+    a: 'On a compatible unlocked phone, open Settings → Mobile Data (or Connections → SIM Manager), choose Add eSIM, and scan the QR code sent to your email. Set Pak-Tel as your mobile data line and enable Data Roaming if prompted.',
+  },
+  {
+    q: 'Can I reload my eSIM without scanning a new QR code?',
+    a: 'Yes! Plans marked "Reloadable" can be topped up anytime from our eSIM Top-up page using your 19–20 digit ICCID.',
+  },
+  {
+    q: 'Will it work on my phone?',
+    a: 'Use the Compatibility Checker above to search your model across 10 major brands, or message us on WhatsApp before ordering if you would like our team to double-check your exact variant.',
   },
 ];
 
-export function StorefrontPage({ config }: { config: StoreConfig | null }) {
-  const { user } = useAuth();
-  const [bundles, setBundles] = useState<PublicBundle[]>([]);
-  const [loadingBundles, setLoadingBundles] = useState(true);
-  const [category, setCategory] = useState('all');
-  const [sort, setSort] = useState('recommended');
-  const [reloadableOnly, setReloadableOnly] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedBundle, setSelectedBundle] = useState<PublicBundle | null>(null);
+type DataFilter = 'all' | 'under1' | '1to5' | '5to10' | 'over10';
+type SortMode = 'recommended' | 'price_asc' | 'price_desc' | 'data_asc' | 'data_desc';
 
-  // Device compatibility state
-  const [devices, setDevices] = useState<DeviceCategory[]>([]);
-  const [activeBrand, setActiveBrand] = useState('Apple');
+export function StorefrontPage() {
+  const storeConfig = useContext(StoreContext);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [bundles, setBundles] = useState<Bundle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dataFilter, setDataFilter] = useState<DataFilter>('all');
+  const [countryFilter, setCountryFilter] = useState<string>('ALL');
+  const [sortMode, setSortMode] = useState<SortMode>('recommended');
+  const [selectedBundle, setSelectedBundle] = useState<Bundle | null>(null);
+
+  // Compatibility checker state
   const [deviceQuery, setDeviceQuery] = useState('');
+  const [selectedBrand, setSelectedBrand] = useState<string>('');
+  const [deviceResults, setDeviceResults] = useState<CompatibleDevice[] | null>(null);
+  const [checkedLabel, setCheckedLabel] = useState<string>('');
+
+  // FAQ accordion
   const [openFaq, setOpenFaq] = useState<number | null>(0);
 
-  useEffect(() => {
-    let mounted = true;
-    setLoadingBundles(true);
-    const params = new URLSearchParams();
-    if (category !== 'all') params.set('category', category);
-    if (sort) params.set('sort', sort);
-    if (reloadableOnly) params.set('reloadable', 'true');
-    if (searchQuery.trim()) params.set('q', searchQuery.trim());
-
-    apiFetch<PublicBundle[]>(`/api/bundles?${params.toString()}`)
-      .then((res) => {
-        if (mounted) setBundles(res);
-      })
-      .catch(() => {
-        if (mounted) setBundles([]);
-      })
-      .finally(() => {
-        if (mounted) setLoadingBundles(false);
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, [category, sort, reloadableOnly, searchQuery]);
+  const paymentCancelled = searchParams.get('payment') === 'cancelled';
 
   useEffect(() => {
-    apiFetch<DeviceCategory[]>('/api/compatibility/devices')
-      .then((res) => setDevices(res))
-      .catch(() => setDevices([]));
+    setLoading(true);
+    api
+      .getBundles()
+      .then((rows) => setBundles(rows))
+      .catch(() => setBundles([]))
+      .finally(() => setLoading(false));
   }, []);
 
-  const flattenedBrands = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const cat of devices) {
-      for (const b of cat.brands || []) {
-        const list = map.get(b.brand) || [];
-        for (const m of b.models || []) {
-          if (!list.includes(m.model)) list.push(m.model);
-        }
-        map.set(b.brand, list);
-      }
+  const countries = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const b of bundles) {
+      map.set(b.countryCode, b.countryName);
     }
-    return Array.from(map.entries()).map(([brand, models]) => ({ brand, models }));
-  }, [devices]);
+    return Array.from(map.entries());
+  }, [bundles]);
 
-  const filteredDeviceModels = useMemo(() => {
-    if (deviceQuery.trim()) {
-      const q = deviceQuery.trim().toLowerCase();
-      const hits: { brand: string; model: string }[] = [];
-      for (const b of flattenedBrands) {
-        for (const m of b.models) {
-          if (b.brand.toLowerCase().includes(q) || m.toLowerCase().includes(q)) {
-            hits.push({ brand: b.brand, model: m });
-          }
-        }
-      }
-      return hits;
+  const filteredBundles = useMemo(() => {
+    let list = [...bundles];
+    if (countryFilter !== 'ALL') {
+      list = list.filter((b) => b.countryCode === countryFilter);
     }
-    const found = flattenedBrands.find((b) => b.brand === activeBrand) || flattenedBrands[0];
-    return (found?.models || []).map((m) => ({ brand: found.brand, model: m }));
-  }, [flattenedBrands, activeBrand, deviceQuery]);
+    if (dataFilter === 'under1') {
+      list = list.filter((b) => !b.unlimited && b.dataMb < 1024);
+    } else if (dataFilter === '1to5') {
+      list = list.filter((b) => !b.unlimited && b.dataMb >= 1024 && b.dataMb <= 5120);
+    } else if (dataFilter === '5to10') {
+      list = list.filter((b) => !b.unlimited && b.dataMb > 5120 && b.dataMb <= 10240);
+    } else if (dataFilter === 'over10') {
+      list = list.filter((b) => b.unlimited || b.dataMb > 10240);
+    }
+
+    if (sortMode === 'price_asc') {
+      list.sort((a, b) => a.pricePkr - b.pricePkr);
+    } else if (sortMode === 'price_desc') {
+      list.sort((a, b) => b.pricePkr - a.pricePkr);
+    } else if (sortMode === 'data_asc') {
+      list.sort((a, b) => a.dataMb - b.dataMb);
+    } else if (sortMode === 'data_desc') {
+      list.sort((a, b) => b.dataMb - a.dataMb);
+    } else {
+      list.sort((a, b) => a.sortOrder - b.sortOrder);
+    }
+    return list;
+  }, [bundles, countryFilter, dataFilter, sortMode]);
+
+  async function handleDeviceSearch(e?: React.FormEvent, brandOverride?: string) {
+    if (e) e.preventDefault();
+    const b = brandOverride !== undefined ? brandOverride : selectedBrand;
+    const q = brandOverride !== undefined ? '' : deviceQuery.trim();
+    if (!b && !q) {
+      setDeviceResults(null);
+      setCheckedLabel('');
+      return;
+    }
+    try {
+      const res = await api.searchDevices(q || undefined, b || undefined);
+      setDeviceResults(res.devices);
+      setCheckedLabel(b || q);
+    } catch {
+      setDeviceResults([]);
+      setCheckedLabel(b || q);
+    }
+  }
+
+  const tickerText =
+    storeConfig.storeNotice ||
+    "Welcome to Pak-tel.com 📱 PTA Blocked Phone? Need mobile data? 🌐 Contact us and stay connected! 🚀 📲 Pak-tel | Pakistan's Cheapest Data eSIM Provider 🇵🇰📶";
+
+  const waSupportUrl = `https://wa.me/${storeConfig.supportWhatsapp}?text=${encodeURIComponent(
+    'Hi Pak-Tel, can you check my phone for eSIM support?',
+  )}`;
 
   return (
     <div>
-      {/* Hero Section */}
-      <section className="relative overflow-hidden border-b border-slate-900 bg-gradient-to-b from-emerald-950/35 via-slate-950 to-slate-950 pt-12 pb-16 sm:pt-16 sm:pb-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold mb-5">
-              <Sparkles className="w-3.5 h-3.5" />
-              PTA-Blocked Phone Data Solution • Instant 2-Min QR Activation
+      {/* Scrolling Updates Ticker below fixed header */}
+      <div className="pt-ticker">
+        <div className="pt-ticker-label">
+          <span className="w-2 h-2 rounded-full bg-[#071322] border border-[#071322]" />
+          Pak-Tel / updates
+        </div>
+        <div className="flex-1 overflow-hidden flex items-center">
+          <div className="pt-ticker-track text-xs md:text-sm text-white/90 font-medium">
+            <span className="px-8 whitespace-nowrap">{tickerText}</span>
+            <span className="px-8 whitespace-nowrap">{tickerText}</span>
+            <span className="px-8 whitespace-nowrap">{tickerText}</span>
+            <span className="px-8 whitespace-nowrap">{tickerText}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Payment Cancelled Banner (matching pak-tel.com) */}
+      {paymentCancelled && (
+        <div className="bg-[#ffad71] text-[#071322] px-4 py-3 text-xs sm:text-sm font-semibold">
+          <div className="pt-container flex items-center justify-between gap-4">
+            <span>
+              Payment cancelled — you have not been charged. Your plan is still available whenever
+              you are ready.
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                searchParams.delete('payment');
+                setSearchParams(searchParams);
+              }}
+              className="font-bold px-2 py-0.5 rounded hover:bg-[#071322]/10"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Hero Section matching pak-tel.com */}
+      <section className="relative overflow-hidden bg-[#071322] text-white pt-14 pb-20 md:pt-20 md:pb-28">
+        <div className="pt-hero-grid absolute inset-0 pointer-events-none" />
+        <div
+          className="absolute -top-48 right-[15%] w-[500px] h-[500px] rounded-full pointer-events-none"
+          style={{
+            background: 'rgba(109, 227, 193, 0.09)',
+            boxShadow: '0 0 130px rgba(109, 227, 193, 0.09)',
+          }}
+        />
+        <div
+          className="absolute -bottom-48 -right-24 w-[460px] h-[460px] rounded-full pointer-events-none"
+          style={{
+            background: 'rgba(189, 184, 255, 0.09)',
+            boxShadow: '0 0 130px rgba(189, 184, 255, 0.1)',
+          }}
+        />
+
+        <div className="pt-container relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+          <div className="lg:col-span-7">
+            <div className="inline-flex items-center gap-2.5 font-mono-pt text-[11px] uppercase tracking-[0.11em] text-[#ecf6ff]/65">
+              <span className="pt-live-dot" />
+              Pak-Tel / digital data
             </div>
 
-            <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white leading-[1.12]">
-              Pakistan&apos;s Cheapest{' '}
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-300">
-                5G / 4G Data eSIM
-              </span>{' '}
-              Store
+            <h1 className="font-display text-5xl sm:text-6xl xl:text-[82px] font-semibold tracking-[-0.065em] leading-[0.95] mt-6">
+              Your data.{' '}
+              <span className="text-[#c8ff43] block sm:inline">On your terms.</span>
             </h1>
 
-            <p className="mt-4 text-base sm:text-lg text-slate-300 leading-relaxed max-w-2xl">
-              Stay connected anywhere in Pakistan without carrying a second phone or pocket Wi-Fi.
-              Pay seamlessly in <strong className="text-white">PKR via DPay</strong> (Raast,
-              JazzCash, Easypaisa &amp; Bank Cards) and scan your QR code immediately.
+            <p className="mt-7 text-base sm:text-lg text-[#e7f2fa]/70 max-w-xl leading-relaxed">
+              Flexible eSIM data for Pakistan and beyond. No store queues, no tiny SIM trays, no
+              account signups — pay in PKR, receive your QR code by email, scan, and get on with
+              your day.
             </p>
 
-            <div className="mt-7 flex flex-wrap items-center gap-3.5">
-              <a
-                href="#plans"
-                className="px-6 py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-sm shadow-lg shadow-emerald-500/25 transition"
-              >
-                Explore Data Bundles
+            <div className="mt-8 flex flex-wrap items-center gap-3.5">
+              <a href="#plans" className="pt-btn pt-btn--lime">
+                Shop data plans ↗
               </a>
-              <Link
-                to="/my-esim"
-                className="px-5 py-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-semibold text-sm flex items-center gap-2 transition"
-              >
-                <QrCode className="w-4 h-4 text-emerald-400" />
-                Check ICCID Balance / Top-Up
+              <Link to="/my-esim" className="pt-btn pt-btn--ghost-light">
+                eSIM Top-up ↗
               </Link>
+              <a
+                href="#how"
+                className="inline-flex items-center gap-2 px-3 py-2 text-xs font-bold text-white/75 hover:text-[#c8ff43]"
+              >
+                See how it works ↓
+              </a>
             </div>
 
-            <div className="mt-9 grid grid-cols-2 sm:grid-cols-4 gap-4 pt-6 border-t border-slate-800/80 text-xs sm:text-sm">
-              <div className="flex items-center gap-2 text-slate-300">
-                <Zap className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Instant QR Delivery</span>
+            <div className="mt-7 flex flex-wrap items-center gap-5 text-xs text-white/65 font-mono-pt">
+              <span className="inline-flex items-center gap-2">
+                <span className="text-[#c8ff43]">✓</span> Instant QR delivery via Email
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <span className="text-[#c8ff43]">✓</span> Data-first, always
+              </span>
+            </div>
+
+            <div className="mt-10 pt-8 border-t border-white/10 grid grid-cols-3 gap-4 max-w-lg">
+              <div>
+                <strong className="block font-display text-2xl sm:text-3xl text-white">100%</strong>
+                <span className="text-xs text-white/55">digital setup</span>
               </div>
-              <div className="flex items-center gap-2 text-slate-300">
-                <Wifi className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Hotspot Enabled</span>
+              <div>
+                <strong className="block font-display text-2xl sm:text-3xl text-[#c8ff43]">
+                  &lt; 2 min
+                </strong>
+                <span className="text-xs text-white/55">automated email QR</span>
               </div>
-              <div className="flex items-center gap-2 text-slate-300">
-                <RefreshCw className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Reloadable ICCID</span>
+              <div>
+                <strong className="block font-display text-2xl sm:text-3xl text-white">24/7</strong>
+                <span className="text-xs text-white/55">WhatsApp support</span>
               </div>
-              <div className="flex items-center gap-2 text-slate-300">
-                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>DPay PKR Checkout</span>
+            </div>
+          </div>
+
+          {/* Right-hand interactive eSIM Phone Card */}
+          <div className="lg:col-span-5">
+            <div className="relative mx-auto max-w-sm rounded-[30px] border border-white/15 bg-[#10223a]/85 backdrop-blur-xl p-6 shadow-2xl">
+              <div className="flex items-center justify-between text-[11px] font-mono-pt text-white/65 pb-4 border-b border-white/10">
+                <span>9:41</span>
+                <span className="inline-flex items-center gap-1.5 text-[#c8ff43]">
+                  <span className="pt-live-dot" /> PK • 5G / 4G LTE
+                </span>
+              </div>
+
+              <div className="mt-5 flex items-center justify-between">
+                <img src="/ptlogo.png" alt="Pak-Tel" className="h-11 w-auto object-contain" />
+                <span className="rounded-full bg-[#c8ff43]/15 border border-[#c8ff43]/40 px-3 py-1 font-mono-pt text-[10px] font-bold uppercase text-[#c8ff43]">
+                  PAK-TEL ESIM ACTIVE
+                </span>
+              </div>
+
+              <div className="mt-6 rounded-2xl bg-[#071322] border border-white/10 p-5">
+                <p className="font-mono-pt text-[10px] uppercase tracking-wider text-white/50">
+                  Live Data Balance
+                </p>
+                <div className="mt-2 flex items-baseline justify-between">
+                  <div>
+                    <span className="font-display text-5xl font-semibold tracking-tight text-white">
+                      15.0
+                    </span>
+                    <span className="ml-1.5 font-mono-pt text-xs text-[#c8ff43]">GB</span>
+                  </div>
+                  <span className="font-mono-pt text-xs text-white/60">30 days • 100%</span>
+                </div>
+                <div className="mt-4 h-2 rounded-full bg-white/10 overflow-hidden">
+                  <div className="h-full w-[82%] rounded-full bg-gradient-to-r from-[#6de3c1] to-[#c8ff43]" />
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="rounded-xl bg-white/5 border border-white/10 p-3.5">
+                  <span className="font-mono-pt text-[10px] text-[#c8ff43] block">⌁ eSIM READY</span>
+                  <strong className="text-xs text-white mt-1 block">Delivered on payment</strong>
+                </div>
+                <div className="rounded-xl bg-white/5 border border-white/10 p-3.5">
+                  <span className="font-mono-pt text-[10px] text-[#6de3c1] block">↗ RELOADABLE</span>
+                  <strong className="text-xs text-white mt-1 block">Top up via ICCID</strong>
+                </div>
+              </div>
+
+              <p className="mt-5 text-center text-xs italic text-white/55">
+                “Connectivity, without the complicated bit.” —{' '}
+                <strong className="not-italic text-white/80">Pak-Tel promise</strong>
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Plans / Live Inventory Section matching pak-tel.com */}
+      <section id="plans" className="py-20 md:py-28 bg-[#f5f6f1]">
+        <div className="pt-container">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div>
+              <div className="inline-flex items-center gap-2 font-mono-pt text-[10px] uppercase tracking-[0.11em] text-[#071322]/60">
+                <span className="w-2 h-2 rounded-full bg-[#071322]" />
+                Plans / live inventory
+              </div>
+              <h2 className="font-display text-4xl sm:text-5xl md:text-6xl font-semibold tracking-[-0.06em] leading-[0.96] mt-4 text-[#071322]">
+                Pick a plan,{' '}
+                <span className="italic font-normal text-[#4b6b16]">not a compromise.</span>
+              </h2>
+              <p className="mt-4 text-sm sm:text-base text-[#071322]/65 max-w-xl">
+                From a quick daily trial to unlimited 30-day streaming, choose the amount that fits
+                your day. Pay in PKR and receive your QR code straight in your inbox.
+              </p>
+            </div>
+
+            <div className="inline-flex items-center gap-2.5 self-start md:self-auto rounded-full bg-[#071322] text-white px-4 py-2 font-mono-pt text-[10px] uppercase tracking-wider">
+              <span className="pt-live-dot" />
+              Live pricing synced · {bundles.length} plans
+            </div>
+          </div>
+
+          {/* Filter Tabs & Sort Bar */}
+          <div className="mt-10 flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-6 border-b border-[#071322]/12">
+            <div className="flex flex-wrap items-center gap-2">
+              {(
+                [
+                  ['all', 'All plans'],
+                  ['under1', 'Under 1 GB'],
+                  ['1to5', '1–5 GB'],
+                  ['5to10', '5–10 GB'],
+                  ['over10', '10 GB+ / Unlimited'],
+                ] as [DataFilter, string][]
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setDataFilter(id)}
+                  className={`px-4 py-2 rounded-full text-xs font-bold transition-colors ${
+                    dataFilter === id
+                      ? 'bg-[#071322] text-[#c8ff43]'
+                      : 'bg-white border border-[#071322]/15 text-[#071322]/75 hover:border-[#071322]'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+
+              {countries.length > 1 && (
+                <select
+                  value={countryFilter}
+                  onChange={(e) => setCountryFilter(e.target.value)}
+                  aria-label="Filter by country"
+                  className="ml-1 rounded-full bg-white border border-[#071322]/20 px-3.5 py-2 text-xs font-bold text-[#071322]"
+                >
+                  <option value="ALL">All Destinations ({countries.length})</option>
+                  {countries.map(([code, name]) => (
+                    <option key={code} value={code}>
+                      {name} ({code})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2.5 text-xs">
+              <span className="font-mono-pt uppercase text-[10px] text-[#071322]/55">Sort by</span>
+              <select
+                value={sortMode}
+                onChange={(e) => setSortMode(e.target.value as SortMode)}
+                className="rounded-lg bg-white border border-[#071322]/20 px-3 py-2 text-xs font-bold text-[#071322] outline-none"
+              >
+                <option value="recommended">Recommended</option>
+                <option value="price_asc">Price: low to high</option>
+                <option value="price_desc">Price: high to low</option>
+                <option value="data_asc">Data: low to high</option>
+                <option value="data_desc">Data: high to low</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Plan Cards Grid matching pak-tel.com */}
+          {loading ? (
+            <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {[1, 2, 3, 4, 5, 6].map((n) => (
+                <div
+                  key={n}
+                  className="h-[460px] rounded-[18px] bg-white/70 border border-[#071322]/10 animate-pulse"
+                />
+              ))}
+            </div>
+          ) : filteredBundles.length === 0 ? (
+            <div className="mt-8 rounded-[18px] border border-dashed border-[#071322]/25 p-14 text-center">
+              <p className="text-sm text-[#071322]/65 mb-4">
+                No plans match this filter right now.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setDataFilter('all');
+                  setCountryFilter('ALL');
+                }}
+                className="text-xs font-bold underline"
+              >
+                Reset plan filters
+              </button>
+            </div>
+          ) : (
+            <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {filteredBundles.map((plan, idx) => {
+                const isPopular =
+                  (plan.badge || '').toLowerCase().includes('popular') || idx < 4 && dataFilter === 'all' && sortMode === 'recommended' && Boolean(plan.badge?.toLowerCase().includes('popular'));
+                const discount =
+                  plan.originalPricePkr && plan.originalPricePkr > plan.pricePkr
+                    ? Math.round(
+                        ((plan.originalPricePkr - plan.pricePkr) / plan.originalPricePkr) * 100,
+                      )
+                    : 0;
+                const displayNumber = String(idx + 1).padStart(2, '0');
+
+                return (
+                  <article
+                    key={plan.id}
+                    className={`pt-plan-card ${isPopular ? 'is-popular' : ''}`}
+                  >
+                    {/* Card Top Badges */}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`font-mono-pt text-[11px] font-bold px-2.5 py-1 rounded-md ${
+                            isPopular
+                              ? 'bg-white/10 text-[#c8ff43]'
+                              : 'bg-[#071322]/8 text-[#071322]'
+                          }`}
+                        >
+                          {displayNumber}
+                        </span>
+                        <span
+                          className={`font-mono-pt text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-full font-semibold ${
+                            isPopular
+                              ? 'bg-[#c8ff43]/15 text-[#c8ff43] border border-[#c8ff43]/35'
+                              : 'bg-[#e9ebe4] text-[#071322]/75'
+                          }`}
+                        >
+                          {plan.badge || (plan.reloadable ? 'Flexible data' : plan.countryName)}
+                        </span>
+                      </div>
+
+                      {discount > 0 && (
+                        <span
+                          className={`font-mono-pt text-[10px] font-bold uppercase px-2.5 py-1 rounded-full border ${
+                            isPopular
+                              ? 'border-[#c8ff43] text-[#c8ff43] bg-[#c8ff43]/10'
+                              : 'border-[#071322]/20 text-[#071322] bg-[#c8ff43]/45'
+                          }`}
+                        >
+                          SAVE {discount}% OFF
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Plan Title & Big Metric */}
+                    <div className="mt-5">
+                      <p
+                        className={`text-xs font-semibold ${
+                          isPopular ? 'text-white/65' : 'text-[#071322]/60'
+                        }`}
+                      >
+                        {plan.name} • {plan.countryName}
+                      </p>
+                      <div className="mt-2 flex items-end gap-2">
+                        <strong className="font-display text-4xl sm:text-[44px] font-semibold tracking-[-0.07em] leading-none">
+                          {plan.unlimited ? 'Unlimited' : plan.dataDisplay}
+                        </strong>
+                        <span
+                          className={`font-mono-pt text-[10px] uppercase pb-1 ${
+                            isPopular ? 'text-white/50' : 'text-[#071322]/50'
+                          }`}
+                        >
+                          data
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Specs List */}
+                    <dl
+                      className={`mt-5 border-t text-xs ${
+                        isPopular ? 'border-white/12' : 'border-[#071322]/10'
+                      }`}
+                    >
+                      {[
+                        ['Coverage', plan.coverage || '5G/4G/LTE'],
+                        ['Plan type', plan.planType || 'Data only'],
+                        [
+                          'Validity period',
+                          `${plan.validityDays} ${plan.validityDays === 1 ? 'Day' : 'Days'}`,
+                        ],
+                        ['Hotspot', plan.hotspotSupported ? 'Yes' : 'No'],
+                        ['Plan activation', plan.activationType || 'Instant'],
+                        ['Reloadable', plan.reloadable ? 'Yes' : 'No'],
+                      ].map(([dt, dd]) => (
+                        <div
+                          key={dt}
+                          className={`flex items-center justify-between py-2.5 border-b ${
+                            isPopular ? 'border-white/12' : 'border-[#071322]/10'
+                          }`}
+                        >
+                          <dt
+                            className={`font-semibold ${
+                              isPopular ? 'text-white/60' : 'text-[#071322]/60'
+                            }`}
+                          >
+                            {dt}
+                          </dt>
+                          <dd
+                            className={`font-mono-pt font-bold ${
+                              isPopular ? 'text-white' : 'text-[#071322]'
+                            }`}
+                          >
+                            {dd}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+
+                    {/* Price & Get This Plan CTA */}
+                    <div className="mt-auto pt-5 flex items-end justify-between gap-3 flex-wrap">
+                      <div>
+                        <span
+                          className={`block font-mono-pt text-[9px] font-bold uppercase ${
+                            isPopular ? 'text-white/45' : 'text-[#071322]/45'
+                          }`}
+                        >
+                          Price (PKR)
+                        </span>
+                        {plan.originalPricePkr && plan.originalPricePkr > plan.pricePkr ? (
+                          <span
+                            className={`block font-mono-pt text-xs font-bold line-through decoration-2 ${
+                              isPopular
+                                ? 'text-white/65 decoration-[#ffad71]'
+                                : 'text-[#071322]/60 decoration-[#db6e55]'
+                            }`}
+                          >
+                            {formatPkr(plan.originalPricePkr)}
+                          </span>
+                        ) : null}
+                        <strong
+                          className={`font-display text-[26px] font-bold tracking-[-0.05em] leading-none mt-0.5 block ${
+                            isPopular ? 'text-white' : 'text-[#071322]'
+                          }`}
+                        >
+                          {formatPkr(plan.pricePkr)}
+                        </strong>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedBundle(plan)}
+                        className="pt-plan-btn"
+                      >
+                        Get this plan ↗
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="mt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-[#071322]/60">
+            <p>
+              ✓ All plans are data-only eSIMs. Reload plans marked{' '}
+              <strong className="text-[#071322]">Reloadable</strong> anytime via ICCID.
+            </p>
+            <a href="#faq" className="font-bold text-[#071322] underline">
+              Questions before you buy? ↗
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* How It Works Section (Dark Ink matching pak-tel.com) */}
+      <section id="how" className="py-24 bg-[#071322] text-white">
+        <div className="pt-container">
+          <div className="inline-flex items-center gap-2 font-mono-pt text-[10px] uppercase tracking-[0.11em] text-white/60">
+            <span className="pt-live-dot" />
+            How it works
+          </div>
+          <h2 className="font-display text-4xl sm:text-5xl md:text-6xl font-semibold tracking-[-0.06em] mt-4">
+            Three steps. <span className="text-[#c8ff43]">Zero runaround.</span>
+          </h2>
+          <p className="mt-4 text-white/65 max-w-xl text-sm sm:text-base">
+            Everything happens digitally on your phone. Pick your plan, pay in PKR, and scan your
+            eSIM QR code from your email without leaving the sofa.
+          </p>
+
+          <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[
+              {
+                num: '01',
+                badgeBg: 'bg-[#c8ff43]',
+                icon: '⌁',
+                title: 'Choose your data',
+                desc: 'Pick the plan that feels right — whether you need a quick trial, 30 GB, or unlimited monthly data.',
+              },
+              {
+                num: '02',
+                badgeBg: 'bg-[#ffad71]',
+                icon: '↗',
+                title: 'Pay securely via DPay',
+                desc: 'Enter your email address and pay in PKR from any Pakistani wallet or bank card. Zero account creation required.',
+              },
+              {
+                num: '03',
+                badgeBg: 'bg-[#6de3c1]',
+                icon: '✓',
+                title: 'Scan from email & connect',
+                desc: 'Once payment succeeds, Mailjet delivers your eSIM QR code & one-tap install link straight to your inbox.',
+              },
+            ].map((s) => (
+              <div
+                key={s.num}
+                className="relative rounded-[18px] border border-white/12 bg-white/[0.035] p-6 min-h-[260px] flex flex-col justify-between hover:border-[#c8ff43]/40 transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-mono-pt text-xs text-white/45">{s.num}</span>
+                  <span
+                    className={`w-9 h-9 rounded-full ${s.badgeBg} text-[#071322] font-display font-bold grid place-items-center text-lg`}
+                  >
+                    {s.icon}
+                  </span>
+                </div>
+                <div className="mt-12">
+                  <h3 className="font-display text-2xl font-medium tracking-tight">{s.title}</h3>
+                  <p className="mt-2.5 text-xs sm:text-sm text-white/60 leading-relaxed">{s.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 rounded-[18px] border border-[#c8ff43]/25 bg-[#c8ff43]/[0.07] px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <strong className="font-display text-sm text-white block">Made for real life</strong>
+              <span className="text-xs text-white/60">
+                Keep your physical SIM for calls while Pak-Tel handles your high-speed data.
+              </span>
+            </div>
+            <a href="#compatibility" className="text-xs font-bold text-[#c8ff43] underline">
+              Check your phone ↗
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* Why Pak-Tel Section matching pak-tel.com */}
+      <section id="why" className="py-24 bg-[#f5f6f1]">
+        <div className="pt-container">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div>
+              <div className="inline-flex items-center gap-2 font-mono-pt text-[10px] uppercase tracking-[0.11em] text-[#071322]/60">
+                <span className="w-2 h-2 rounded-full bg-[#071322]" />
+                Why Pak-Tel
+              </div>
+              <h2 className="font-display text-4xl sm:text-5xl font-semibold tracking-[-0.06em] mt-4">
+                Small switch. <span className="italic font-normal text-[#4b6b16]">Big difference.</span>
+              </h2>
+            </div>
+            <p className="text-sm text-[#071322]/65 max-w-sm">
+              A better way to stay online is not another complicated app or user login. It’s a
+              clean, flexible connection that gets out of your way.
+            </p>
+          </div>
+
+          <div className="mt-12 grid grid-cols-1 md:grid-cols-12 gap-4">
+            <div className="md:col-span-5 rounded-[18px] bg-[#071322] text-white p-7 flex flex-col justify-between min-h-[290px]">
+              <span className="font-mono-pt text-[10px] uppercase tracking-wider text-white/45">
+                01 / FASTER
+              </span>
+              <div className="my-6 h-24 rounded-xl bg-gradient-to-r from-[#152b3c] to-[#244259] grid place-items-center">
+                <span className="font-display text-6xl text-[#c8ff43]">↯</span>
+              </div>
+              <div>
+                <h3 className="font-display text-2xl font-medium">Instant by design</h3>
+                <p className="mt-2 text-xs sm:text-sm text-white/60 leading-relaxed">
+                  Your plan arrives digitally via Mailjet the moment payment succeeds. No courier,
+                  no store visit, no plastic card to lose.
+                </p>
+              </div>
+            </div>
+
+            <div className="md:col-span-3.5 md:col-span-4 rounded-[18px] bg-white border border-[#071322]/12 p-7 flex flex-col justify-between min-h-[290px]">
+              <span className="font-mono-pt text-[10px] uppercase tracking-wider text-[#071322]/45">
+                02 / FLEXIBLE
+              </span>
+              <div className="w-14 h-14 rounded-xl bg-[#c8ff43] text-[#071322] font-display text-3xl grid place-items-center my-6">
+                ↗
+              </div>
+              <div>
+                <h3 className="font-display text-2xl font-medium">Only pay for what you need</h3>
+                <p className="mt-2 text-xs sm:text-sm text-[#071322]/65 leading-relaxed">
+                  Light trial data or heavy 30-day streaming — reload your existing ICCID in two
+                  taps whenever you run low.
+                </p>
+              </div>
+            </div>
+
+            <div className="md:col-span-3 rounded-[18px] bg-white border border-[#071322]/12 p-7 flex flex-col justify-between min-h-[290px]">
+              <span className="font-mono-pt text-[10px] uppercase tracking-wider text-[#071322]/45">
+                03 / SIMPLE
+              </span>
+              <div className="w-14 h-14 rounded-xl bg-[#ffad71] text-[#071322] font-display text-3xl grid place-items-center my-6">
+                ⌁
+              </div>
+              <div>
+                <h3 className="font-display text-2xl font-medium">No physical SIM</h3>
+                <p className="mt-2 text-xs sm:text-sm text-[#071322]/65 leading-relaxed">
+                  Leave your main number where it is. Add Pak-Tel data without opening the SIM tray.
+                </p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Bundles Catalog Section */}
-      <section id="plans" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-8">
-          <div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-white">
-              Choose Your Data Bundle
+      {/* Compatibility Checker on Lilac (#bdb8ff) matching pak-tel.com */}
+      <section id="compatibility" className="py-24 bg-[#bdb8ff] text-[#071322]">
+        <div className="pt-container grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+          <div className="lg:col-span-5">
+            <div className="inline-flex items-center gap-2 font-mono-pt text-[10px] uppercase tracking-[0.11em] text-[#071322]/70">
+              <span className="w-2 h-2 rounded-full bg-[#071322]" />
+              Compatibility checker
+            </div>
+            <h2 className="font-display text-4xl sm:text-5xl font-semibold tracking-[-0.06em] leading-[0.96] mt-4">
+              Is your phone <span className="italic font-normal text-[#4c477d]">eSIM ready?</span>
             </h2>
-            <p className="text-sm text-slate-400 mt-1">
-              Transparent whole-rupee PKR pricing • Zero hidden roaming charges
+            <p className="mt-5 text-sm sm:text-base text-[#071322]/70 leading-relaxed">
+              Most recent flagship and mid-range phones are good to go. Search your model or browse
+              a brand to get a quick answer.
             </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative">
-              <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search GB or days..."
-                className="pl-9 pr-3 py-2 rounded-xl bg-slate-900 border border-slate-800 focus:border-emerald-500 focus:outline-none text-xs sm:text-sm text-white w-44 sm:w-52"
-              />
+            <div className="mt-6 pt-4 border-t border-[#071322]/20 text-xs text-[#071322]/65">
+              <strong>Note:</strong> Support can vary by exact model, region, and carrier lock.
+              Dial <code className="font-mono-pt font-bold">*#06#</code> to confirm an EID number
+              appears in your phone settings.
             </div>
-
-            <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs sm:text-sm text-slate-300 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={reloadableOnly}
-                onChange={(e) => setReloadableOnly(e.target.checked)}
-                className="accent-emerald-500 rounded"
-              />
-              Reloadable Only
-            </label>
-
-            <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value)}
-              aria-label="Sort bundles"
-              className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs sm:text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
-            >
-              <option value="recommended">Sort: Recommended</option>
-              <option value="price_asc">Price: Low to High</option>
-              <option value="price_desc">Price: High to Low</option>
-              <option value="data_desc">Data: Highest First</option>
-            </select>
           </div>
-        </div>
 
-        {/* Category Filter Pills */}
-        <div className="flex flex-wrap gap-2 mb-8">
-          {CATEGORIES.map((cat) => (
-            <button
-              key={cat.id}
-              onClick={() => setCategory(cat.id)}
-              className={`px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition border ${
-                category === cat.id
-                  ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20'
-                  : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'
-              }`}
-            >
-              {cat.label}
-            </button>
-          ))}
-        </div>
+          <div className="lg:col-span-7">
+            <div className="rounded-[28px] border border-[#071322]/20 bg-white/60 backdrop-blur-md p-6 sm:p-8 shadow-xl">
+              <div className="flex items-center justify-between font-mono-pt text-[10px] uppercase tracking-wider">
+                <span className="inline-flex items-center gap-2 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-[#5b8b4f]" /> Device lookup
+                </span>
+                <span className="text-[#071322]/55">10 brands</span>
+              </div>
 
-        {/* Bundle Grid */}
-        {loadingBundles ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[1, 2, 3, 4, 5, 6].map((i) => (
-              <div
-                key={i}
-                className="h-80 rounded-2xl bg-slate-900/60 border border-slate-800 animate-pulse"
-              />
-            ))}
-          </div>
-        ) : bundles.length === 0 ? (
-          <div className="rounded-2xl bg-slate-900/70 border border-slate-800 p-10 text-center max-w-xl mx-auto">
-            <Globe2 className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
-            <h3 className="text-lg font-bold text-white">No Active Bundles Match Your Filter</h3>
-            <p className="text-sm text-slate-400 mt-1.5">
-              Bundles are curated and managed directly through the Pak-Tel Admin Panel.
-            </p>
-            <div className="mt-5 flex justify-center gap-3">
-              {category !== 'all' || searchQuery ? (
-                <button
-                  onClick={() => {
-                    setCategory('all');
-                    setSearchQuery('');
-                    setReloadableOnly(false);
+              <form onSubmit={(e) => handleDeviceSearch(e)} className="mt-4 flex gap-2">
+                <input
+                  type="text"
+                  value={deviceQuery}
+                  onChange={(e) => {
+                    setDeviceQuery(e.target.value);
+                    if (selectedBrand) setSelectedBrand('');
                   }}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white"
+                  placeholder="Search your phone model (e.g. iPhone 15, Galaxy S24, Pixel 8)…"
+                  className="flex-1 rounded-xl border border-[#071322]/20 bg-white/80 px-4 py-3 text-xs sm:text-sm outline-none focus:border-[#071322]"
+                />
+                <button
+                  type="submit"
+                  className="rounded-xl bg-[#071322] text-white px-5 py-3 text-xs font-bold hover:bg-[#c8ff43] hover:text-[#071322] transition-colors"
                 >
-                  Reset Filters
+                  Check
                 </button>
-              ) : null}
-              <Link
-                to={user?.role === 'ADMIN' ? '/admin' : '/login'}
-                className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold"
-              >
-                {user?.role === 'ADMIN' ? 'Manage Bundles in Admin Panel' : 'Admin Sign In'}
-              </Link>
-            </div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {bundles.map((b) => {
-              const savings =
-                b.priceDifferencePkr && b.priceDifferencePkr > 0
-                  ? b.priceDifferencePkr
-                  : b.actualPricePkr && b.actualPricePkr > b.pricePkr
-                    ? b.actualPricePkr - b.pricePkr
-                    : 0;
+              </form>
 
-              return (
+              {deviceResults !== null && (
                 <div
-                  key={b.id}
-                  className={`relative rounded-2xl p-6 flex flex-col justify-between transition border ${
-                    b.isMostPopular
-                      ? 'bg-gradient-to-b from-slate-900 via-slate-900 to-emerald-950/30 border-emerald-500/50 shadow-xl shadow-emerald-500/10'
-                      : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
+                  className={`mt-4 rounded-xl p-4 text-xs ${
+                    deviceResults.length > 0
+                      ? 'bg-[#c8ff43]/40 border border-[#071322]/15'
+                      : 'bg-[#ffad71]/35 border border-[#071322]/15'
                   }`}
                 >
-                  {/* Top Badges */}
-                  <div>
-                    <div className="flex items-center justify-between gap-2 mb-4">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-1 rounded-md bg-slate-800 text-xs font-semibold text-slate-200">
-                          🇵🇰 {b.countryName}
-                        </span>
-                        {b.isMostPopular && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-300 text-[11px] font-bold">
-                            <Flame className="w-3 h-3 fill-amber-400 text-amber-400" />
-                            Most Popular
-                          </span>
-                        )}
+                  {deviceResults.length > 0 ? (
+                    <div className="space-y-2">
+                      <strong className="font-display text-sm block">
+                        ✓ {deviceResults.length} compatible model group
+                        {deviceResults.length > 1 ? 's' : ''} for “{checkedLabel}”
+                      </strong>
+                      <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
+                        {deviceResults.map((d, i) => (
+                          <div
+                            key={i}
+                            className="rounded-lg bg-white/75 px-3 py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1"
+                          >
+                            <span className="font-bold">
+                              {d.brand} — {d.model}
+                            </span>
+                            <span className="text-[11px] text-[#071322]/65">{d.notes}</span>
+                          </div>
+                        ))}
                       </div>
-
-                      {b.discountPct && b.discountPct > 0 ? (
-                        <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-extrabold">
-                          {b.discountPct}% OFF
-                        </span>
-                      ) : null}
                     </div>
-
-                    <h3 className="text-xl font-extrabold text-white">{b.name}</h3>
-
-                    {/* Pricing Block */}
-                    <div className="mt-3 flex items-baseline gap-2.5">
-                      <span className="text-3xl font-black text-emerald-400">
-                        {formatPkr(b.pricePkr)}
+                  ) : (
+                    <div>
+                      <strong className="font-display text-sm block">
+                        Model “{checkedLabel}” wasn’t found in our quick list
+                      </strong>
+                      <span className="text-[#071322]/75">
+                        Check Settings → Mobile Data → Add eSIM, or{' '}
+                        <a
+                          href={waSupportUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-bold underline"
+                        >
+                          ask us on WhatsApp ↗
+                        </a>
+                        .
                       </span>
-                      {b.actualPricePkr && b.actualPricePkr > b.pricePkr && (
-                        <span className="text-sm text-slate-500 line-through font-medium">
-                          {formatPkr(b.actualPricePkr)}
-                        </span>
-                      )}
                     </div>
-                    {savings > 0 && (
-                      <div className="text-xs font-medium text-emerald-300/90 mt-0.5">
-                        You save {formatPkr(savings)}
-                      </div>
-                    )}
+                  )}
+                </div>
+              )}
 
-                    {/* Spec Rows matching pak-tel.com */}
-                    <div className="mt-5 pt-4 border-t border-slate-800/90 space-y-2.5 text-xs sm:text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Data allowance</span>
-                        <span className="font-bold text-white">{b.dataLabel}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Validity period</span>
-                        <span className="font-semibold text-slate-200">
-                          {b.validityDays} {b.validityDays === 1 ? 'Day' : 'Days'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Coverage</span>
-                        <span className="font-semibold text-slate-200">{b.coverageType}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Plan type</span>
-                        <span className="font-semibold text-slate-200">{b.planType}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Hotspot / Tethering</span>
-                        <span className="font-semibold text-emerald-400">
-                          {b.hotspotAllowed ? 'Yes' : 'No'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Plan activation</span>
-                        <span className="font-semibold text-slate-200">{b.activationType}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Reloadable ICCID</span>
-                        <span className="font-semibold text-emerald-400">
-                          {b.isReloadable ? 'Yes' : 'No'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+              <div className="mt-6 flex items-center justify-between font-mono-pt text-[10px] uppercase text-[#071322]/60">
+                <span>Browse by brand</span>
+                <span>Tap to explore</span>
+              </div>
 
+              <div className="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-2">
+                {BRANDS.map((b) => {
+                  const active = selectedBrand === b.name;
+                  return (
+                    <button
+                      key={b.name}
+                      type="button"
+                      onClick={() => {
+                        setSelectedBrand(b.name);
+                        setDeviceQuery('');
+                        handleDeviceSearch(undefined, b.name);
+                      }}
+                      className={`rounded-xl border p-3 flex flex-col items-center justify-center gap-1.5 text-xs font-bold transition-colors ${
+                        active
+                          ? 'bg-[#071322] text-[#c8ff43] border-[#071322]'
+                          : 'bg-white/70 border-[#071322]/15 text-[#071322] hover:bg-white'
+                      }`}
+                    >
+                      <span className="font-display text-base font-bold">{b.glyph}</span>
+                      <span className="text-[11px]">{b.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="mt-4 text-[11px] text-[#071322]/65">
+                Not seeing your model?{' '}
+                <a
+                  href={waSupportUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-bold underline text-[#071322]"
+                >
+                  Ask us on WhatsApp ↗
+                </a>
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ Section matching pak-tel.com */}
+      <section id="faq" className="py-24 bg-[#f5f6f1]">
+        <div className="pt-container grid grid-cols-1 lg:grid-cols-12 gap-12">
+          <div className="lg:col-span-5">
+            <div className="inline-flex items-center gap-2 font-mono-pt text-[10px] uppercase tracking-[0.11em] text-[#071322]/60">
+              <span className="w-2 h-2 rounded-full bg-[#071322]" />
+              FAQ / the useful bits
+            </div>
+            <h2 className="font-display text-4xl sm:text-5xl font-semibold tracking-[-0.06em] mt-4">
+              Questions? <span className="italic font-normal text-[#4b6b16]">We’ve got data.</span>
+            </h2>
+            <p className="mt-4 text-sm text-[#071322]/65 max-w-sm">
+              Still unsure? Send us a message and a real person from the Pak-Tel team will help you
+              out.
+            </p>
+            <a
+              href={waSupportUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="pt-btn pt-btn--dark mt-6"
+            >
+              Chat with Pak-Tel ↗
+            </a>
+          </div>
+
+          <div className="lg:col-span-7 space-y-3">
+            {FAQS.map((item, i) => {
+              const isOpen = openFaq === i;
+              return (
+                <div
+                  key={i}
+                  className="rounded-2xl bg-white border border-[#071322]/12 overflow-hidden"
+                >
                   <button
-                    onClick={() => setSelectedBundle(b)}
-                    className={`mt-6 w-full py-3 rounded-xl font-bold text-sm transition ${
-                      b.isMostPopular
-                        ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/20'
-                        : 'bg-slate-800 hover:bg-emerald-500 text-white hover:text-slate-950'
-                    }`}
+                    type="button"
+                    onClick={() => setOpenFaq(isOpen ? null : i)}
+                    className="w-full px-6 py-5 text-left flex items-center justify-between gap-4 font-display text-base sm:text-lg font-semibold text-[#071322]"
                   >
-                    Buy Now — {formatPkr(b.pricePkr)}
+                    <span>{item.q}</span>
+                    <span className="w-7 h-7 rounded-full bg-[#f5f6f1] grid place-items-center text-sm shrink-0">
+                      {isOpen ? '−' : '+'}
+                    </span>
                   </button>
+                  {isOpen && (
+                    <div className="px-6 pb-5 text-sm text-[#071322]/70 leading-relaxed border-t border-[#071322]/8 pt-3">
+                      {item.a}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
-        )}
-      </section>
-
-      {/* How It Works */}
-      <section className="border-y border-slate-900 bg-slate-900/30 py-14">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-2xl mx-auto mb-10">
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-white">
-              Get Online in 3 Simple Steps
-            </h2>
-            <p className="text-sm text-slate-400 mt-2">
-              No physical SIM swap, no passport queues, and no extra hotspot device needed.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {[
-              {
-                step: '01',
-                title: 'Pick Your Data Plan',
-                desc: 'Select from Trial 0.5 GB up to 30 GB or Unlimited Data plans tailored for Pakistan 4G/LTE/5G coverage.',
-              },
-              {
-                step: '02',
-                title: 'Pay Instantly in PKR via DPay',
-                desc: 'Complete secure whole-rupee PKR payment using Raast, JazzCash, Easypaisa, or Debit/Credit Card.',
-              },
-              {
-                step: '03',
-                title: 'Scan QR or 1-Tap iPhone Install',
-                desc: 'Scan your instant QR code (or tap Install on iPhone), turn on Data Roaming for the eSIM line, and enjoy fast internet!',
-              },
-            ].map((s) => (
-              <div
-                key={s.step}
-                className="p-6 rounded-2xl bg-slate-900/80 border border-slate-800"
-              >
-                <span className="text-xs font-black tracking-widest text-emerald-400 px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20">
-                  STEP {s.step}
-                </span>
-                <h3 className="text-lg font-bold text-white mt-4">{s.title}</h3>
-                <p className="text-sm text-slate-400 mt-2 leading-relaxed">{s.desc}</p>
-              </div>
-            ))}
-          </div>
         </div>
       </section>
 
-      {/* Device Compatibility Checker */}
-      <section id="compatibility" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        <div className="rounded-3xl bg-slate-900/75 border border-slate-800 p-6 sm:p-10">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
-            <div>
-              <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-                Hardware Verification
-              </span>
-              <h2 className="text-2xl sm:text-3xl font-extrabold text-white mt-1">
-                eSIM Device Compatibility Checker
-              </h2>
-              <p className="text-sm text-slate-400 mt-1">
-                Quick tip: Dial <code className="text-emerald-300 font-mono">*#06#</code> — if
-                an <strong>EID</strong> number appears, your smartphone supports eSIM!
-              </p>
-            </div>
-
-            <div className="relative w-full md:w-72">
-              <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-              <input
-                type="text"
-                value={deviceQuery}
-                onChange={(e) => setDeviceQuery(e.target.value)}
-                placeholder="Search iPhone 15, Galaxy S24, Pixel..."
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-emerald-500 focus:outline-none text-sm text-white"
-              />
-            </div>
-          </div>
-
-          {!deviceQuery.trim() && (
-            <div className="flex flex-wrap gap-2 mb-6">
-              {flattenedBrands.map((b) => (
-                <button
-                  key={b.brand}
-                  onClick={() => setActiveBrand(b.brand)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-semibold border transition ${
-                    activeBrand === b.brand
-                      ? 'bg-emerald-500 text-slate-950 border-emerald-400'
-                      : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  {b.brand}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-1">
-            {filteredDeviceModels.map((item, idx) => (
-              <div
-                key={`${item.brand}-${item.model}-${idx}`}
-                className="p-3.5 rounded-xl bg-slate-950 border border-slate-800/80 flex items-start gap-2.5"
-              >
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <div>
-                  <div className="text-xs font-semibold text-emerald-400">{item.brand}</div>
-                  <div className="text-sm text-slate-200">{item.model}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* FAQ Section */}
-      <section id="faq" className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
-        <div className="text-center mb-8">
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-white">
-            Frequently Asked Questions
-          </h2>
-          <p className="text-sm text-slate-400 mt-1">
-            Everything you need to know about Pak-Tel Data eSIMs &amp; DPay payments
+      {/* Bottom Ready CTA */}
+      <section className="py-20 bg-[#071322] text-white border-t border-white/10">
+        <div className="pt-container text-center max-w-2xl">
+          <p className="font-mono-pt text-[10px] uppercase tracking-[0.12em] text-[#c8ff43]">
+            Your next signal is closer than you think
           </p>
-        </div>
-
-        <div className="space-y-3">
-          {FAQS.map((item, idx) => {
-            const isOpen = openFaq === idx;
-            return (
-              <div
-                key={idx}
-                className="rounded-2xl bg-slate-900/80 border border-slate-800 overflow-hidden"
-              >
-                <button
-                  onClick={() => setOpenFaq(isOpen ? null : idx)}
-                  className="w-full px-6 py-4 text-left flex items-center justify-between gap-4"
-                >
-                  <span className="font-semibold text-sm sm:text-base text-white">
-                    {item.q}
-                  </span>
-                  <ChevronDown
-                    className={`w-5 h-5 text-slate-400 shrink-0 transition-transform ${
-                      isOpen ? 'rotate-180 text-emerald-400' : ''
-                    }`}
-                  />
-                </button>
-                {isOpen && (
-                  <div className="px-6 pb-5 text-sm text-slate-300 leading-relaxed border-t border-slate-800/60 pt-3">
-                    {item.a}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          <h2 className="font-display text-4xl sm:text-5xl font-semibold tracking-[-0.06em] mt-3">
+            Ready to get <span className="text-[#c8ff43]">properly connected?</span>
+          </h2>
+          <p className="mt-4 text-sm sm:text-base text-white/65">
+            Choose your data, complete PKR checkout, and scan your eSIM QR code from your email in
+            minutes.
+          </p>
+          <div className="mt-8 flex flex-wrap justify-center gap-3.5">
+            <a href="#plans" className="pt-btn pt-btn--lime">
+              Browse eSIM plans ↗
+            </a>
+            <Link to="/my-esim" className="pt-btn pt-btn--ghost-light">
+              Reload existing ICCID ↗
+            </Link>
+          </div>
         </div>
       </section>
 

@@ -1,0 +1,91 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: paktel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-esim}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-esim}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-esim} -d ${POSTGRES_DB:-esim}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: paktel-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: ./backend/Dockerfile
+    container_name: paktel-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-esim}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-esim}
+      REDIS_URL: redis://redis:6379
+      APP_BASE_URL: ${APP_BASE_URL:-https://pak-tel.com}
+      FRONTEND_URL: ${FRONTEND_URL:-https://pak-tel.com}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@pak-tel.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-30d}
+      STORE_NAME: ${STORE_NAME:-Pak-Tel}
+      WHATSAPP_CONTACT: ${WHATSAPP_CONTACT:-923259717066}
+      EUR_TO_PKR_RATE: ${EUR_TO_PKR_RATE:-303.8602}
+      YESIM_BASE_URL: ${YESIM_BASE_URL:-https://partners-api.yesim.biz}
+      YESIM_API_TOKEN: ${YESIM_API_TOKEN}
+      YESIM_MOCK_MODE: ${YESIM_MOCK_MODE:-false}
+      DPAY_BASE_URL: ${DPAY_BASE_URL:-https://api.dpay.com.pk/v1}
+      DPAY_API_KEY: ${DPAY_API_KEY}
+      DPAY_WEBHOOK_SECRET: ${DPAY_WEBHOOK_SECRET}
+      DPAY_MOCK_MODE: ${DPAY_MOCK_MODE:-false}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: paktel-caddy
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

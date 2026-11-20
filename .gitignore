@@ -1,0 +1,62 @@
+# Node
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+.npm
+.eslintcache
+
+# Local database / runtime state
+backend/data/
+*.db
+*.db-journal
+
+# Env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Flutter / Dart
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/build/
+mobile/.metadata
+mobile/.pub-cache/
+mobile/.pub/
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/ios/Flutter/Flutter.framework
+mobile/ios/Flutter/Flutter.podspec
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/app/google-services.json
+mobile/ios/Runner/GoogleService-Info.plist
+mobile/coverage/
+
+# Prisma
+backend/prisma/migrations/dev.db*
+
+# Docker
+.docker/
+
+# Local Caddy config (use Caddyfile.example as template)
+/Caddyfile
+
+# CI workflow staged for manual add (needs token workflow scope)
+.ci-pending/

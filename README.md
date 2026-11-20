@@ -2,7 +2,7 @@
 
 Full-stack eSIM storefront, self-service ICCID balance/reload portal, Admin Console, and Flutter mobile client built on [`recepasan/openesim-application`](https://github.com/recepasan/openesim-application) to replace **`pak-tel.com`** and **`my.pak-tel.com`**.
 
-## Key Architecture & Integrations
+## Key Architecture & Integrations 
 
 1. **Manual Admin Bundle Catalog (`/admin`)**
    - Bundles are created, priced, ordered, toggled, and deleted manually from the Admin Panel (no external Google Sheet dependency at runtime).

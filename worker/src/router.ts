@@ -29,8 +29,6 @@ export interface SqlExecutor {
   exec(query: string, ...bindings: any[]): SqlCursorLike;
 }
 
-const EPHEMERAL_FALLBACK_JWT_KEY = crypto.randomUUID() + crypto.randomUUID();
-
 export function jsonResponse(
   data: unknown,
   status = 200,
@@ -223,6 +221,7 @@ export const SCHEMA_DDL = `
 
 export class PakTelApiEngine {
   private initialized = false;
+  private ephemeralFallbackJwtKey: string | null = null;
 
   constructor(private readonly sql: SqlExecutor) {}
 
@@ -289,7 +288,11 @@ export class PakTelApiEngine {
 
   private getJwtSecret(env: RuntimeSecretsEnv): string {
     const configured = String(env.JWT_SECRET || '').trim();
-    return configured.length >= 8 ? configured : EPHEMERAL_FALLBACK_JWT_KEY;
+    if (configured.length >= 8) return configured;
+    if (!this.ephemeralFallbackJwtKey) {
+      this.ephemeralFallbackJwtKey = crypto.randomUUID() + crypto.randomUUID();
+    }
+    return this.ephemeralFallbackJwtKey;
   }
 
   private getPricingSettings(): {

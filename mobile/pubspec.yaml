@@ -1,0 +1,60 @@
+name: paktel_esim_app
+description: Pak-Tel Data eSIM mobile app (Android + iOS) — powered by Yesim Partner API & DPay PKR checkout.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # State & routing
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+  go_router: ^14.0.0
+
+  # Networking
+  dio: ^5.4.1
+  pretty_dio_logger: ^1.3.1
+
+  # Models
+  freezed_annotation: ^2.4.1
+  json_annotation: ^4.8.1
+
+  # Storage
+  flutter_secure_storage: ^9.0.0
+  shared_preferences: ^2.2.2
+
+  # QR & DPay hosted checkout deep links
+  qr_flutter: ^4.1.0
+  url_launcher: ^6.2.5
+
+  # i18n & formatting
+  easy_localization: ^3.0.5
+  intl: ^0.20.2
+
+  # UI helpers
+  cached_network_image: ^3.3.1
+  country_flags: ^3.0.0
+
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+  build_runner: ^2.4.8
+  riverpod_generator: ^2.4.0
+  freezed: ^2.4.7
+  json_serializable: ^6.7.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/i18n/

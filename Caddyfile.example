@@ -1,0 +1,52 @@
+# Production Caddy config.
+#
+# Caddy obtains Let's Encrypt certificates automatically the first time it
+# serves the domain. Make sure the A/AAAA records point to this server and
+# ports 80 + 443 are open BEFORE bringing it up.
+#
+# Copy to ./Caddyfile, replace api.example.com with your real subdomain, and
+# (optionally) update the email address for ACME.
+
+{
+    # ACME account email for cert expiry notices. Optional but recommended.
+    email you@example.com
+
+    # Uncomment during initial debugging to use Let's Encrypt's staging CA
+    # (no rate limits, but certs aren't trusted by browsers).
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+api.example.com {
+    encode zstd gzip
+
+    # Stripe webhooks need the raw body for HMAC signature verification.
+    # Caddy doesn't modify bodies by default, but we set max body size
+    # generously to avoid 413s on the rare large payload.
+    request_body {
+        max_size 10MB
+    }
+
+    # Health endpoint shouldn't trigger access logs (optional).
+    @health path /health
+    log_skip @health
+
+    reverse_proxy backend:3000 {
+        # Forward client IP for the eSIM Access webhook IP allowlist middleware.
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+
+        # Tight timeouts; eSIM Access calls happen async via BullMQ so any
+        # client-facing request that takes >30s is broken anyway.
+        transport http {
+            dial_timeout 10s
+            response_header_timeout 30s
+        }
+    }
+
+    log {
+        output stdout
+        format json
+        level INFO
+    }
+}
